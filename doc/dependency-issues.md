@@ -6,6 +6,46 @@ entry here.
 
 ## avaje-json-core 3.16
 
+### Streaming: `hasNextElement()` ends an array early at a buffer edge
+
+**The most serious one.** It depends only on where the data falls in the 4096 byte
+read buffer, so it shows up after gigabytes of valid input. Importing the
+Switzerland dump failed at byte 3,666,782,212:
+
+```
+Expecting ']' as array end, instead found ',' at position: 3666782212,
+following: `,`, before: `"Bärau"],"state:bn"`
+```
+
+**Cause** (`io.avaje.json.stream.core.JParser`):
+
+* `parseString()` takes a fast path for ASCII strings that reads straight from the
+  buffer up to `length`, not `readLimit`, and never refills.
+* So when a string's closing quote is the last buffered byte, `currentIndex == length`
+  afterwards, although the stream has more.
+* `hasNextElement()` starts with `if (currentIndex >= length) return false;`, which in
+  streaming mode means "end of this buffer", not "end of input", so the array looks
+  finished. The caller's `endArray()` then refills and finds the `,`.
+
+`hasNextStreamElement()` has the same early check.
+
+**Reproduction** (the closing quote of the first element is byte 4096):
+
+```java
+String json = "{\"a\":[\"" + "x".repeat(4088) + "\",\"y\"]}";
+var r = JsonStream.builder().build().reader(new ByteArrayInputStream(json.getBytes()));
+r.beginObject(); r.hasNextField(); r.nextField();
+r.beginArray();
+while (r.hasNextElement()) { r.readString(); }   // returns false after the first element
+r.endArray();                                    // JsonDataException: Expecting ']' ... found ','
+```
+
+The same JSON read from a `byte[]` works.
+
+**Workaround:** `geon-dump` splits the input into lines itself (`Lines.java`) and parses
+each line from a `byte[]`. Dumps are JSON lines, so nothing is lost, and errors now
+name the line.
+
 ### `JsonWriter.rawValue(String)` corrupts non-ASCII text
 
 **Symptom:** text written with `rawValue` loses every character above U+007F. Each

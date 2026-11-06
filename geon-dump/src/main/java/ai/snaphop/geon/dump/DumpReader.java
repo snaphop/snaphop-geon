@@ -24,8 +24,9 @@ import io.avaje.json.stream.JsonStream;
 
 /// Reads a Nominatim dump file and hands each [Place] to a consumer.
 ///
-/// The input is a sequence of JSON objects, normally one per line. The reader streams:
-/// memory use does not grow with the size of the file.
+/// The input is JSON lines: one document per line, as Photon and Nominatim write
+/// dumps. The reader streams line by line, so memory use does not grow with the size of
+/// the file.
 ///
 /// The input must be uncompressed. Dumps are usually distributed compressed with
 /// zstd; decompress them on the fly, for example:
@@ -78,17 +79,14 @@ public final class DumpReader {
 	///   where the problem is.
 	/// @throws IOException if reading fails.
 	public DumpSummary read(InputStream input, Consumer<Place> sink) throws IOException {
-		try (JsonReader r = JSON.reader(input)) {
-			return new Run(r, sink).read();
-		}
-		catch (JsonException e) {
-			throw new DumpFormatException("Invalid JSON in dump: " + e.getMessage(), e);
-		}
+		return new Run(sink).read(new Lines(input));
 	}
 
 	private final class Run {
 
-		private final JsonReader r;
+		private JsonReader r = JSON.reader(new byte[0]);
+
+		private boolean seenHeader;
 
 		private final Consumer<Place> sink;
 
@@ -108,38 +106,62 @@ public final class DumpReader {
 
 		private long skippedCount;
 
-		Run(JsonReader r, Consumer<Place> sink) {
-			this.r = r;
+		Run(Consumer<Place> sink) {
 			this.sink = sink;
 		}
 
-		DumpSummary read() throws IOException {
-			r.beginStream();
-			if (!r.hasNextStreamElement()) {
-				throw new DumpFormatException("The dump is empty. Expected a NominatimDumpFile header first.");
-			}
-			String type = beginDocument();
-			if (!type.equals("NominatimDumpFile")) {
-				throw new DumpFormatException(
-						"The first document must be of type 'NominatimDumpFile' but was '" + type + "'.");
-			}
-			readHeader();
-			endDocument();
-			while (r.hasNextStreamElement()) {
-				type = beginDocument();
-				switch (type) {
-					case "Place" -> readPlaces();
-					case "CountryInfo" -> readCountryInfo();
-					case "NominatimDumpFile" -> throw new DumpFormatException(
-							"Found a second NominatimDumpFile header (" + r.location() + ").");
-					default -> {
-						logger.log(Level.WARNING, "Ignoring dump document of unknown type ''{0}''.", type);
-						r.skipValue();
+		/// Parses the input line by line. A line may hold several documents, but a
+		/// document may not span lines, which is what the JSON lines format promises.
+		DumpSummary read(Lines lines) throws IOException {
+			byte[] line;
+			while ((line = lines.next()) != null) {
+				if (Lines.isBlank(line)) {
+					continue;
+				}
+				try (JsonReader reader = JSON.reader(line)) {
+					r = reader;
+					r.beginStream();
+					while (r.hasNextStreamElement()) {
+						document();
 					}
 				}
-				endDocument();
+				catch (JsonException e) {
+					throw new DumpFormatException("Invalid JSON on line " + lines.number() + " of the dump: "
+							+ e.getMessage() + ". Each document must be on a single line (JSON lines).", e);
+				}
+				catch (DumpFormatException e) {
+					throw new DumpFormatException("Line " + lines.number() + " of the dump: " + e.getMessage(), e);
+				}
+			}
+			if (!seenHeader) {
+				throw new DumpFormatException("The dump is empty. Expected a NominatimDumpFile header first.");
 			}
 			return new DumpSummary(generator, dataTimestamp, placeCount, skippedCount);
+		}
+
+		private void document() throws DumpFormatException {
+			String type = beginDocument();
+			if (!seenHeader) {
+				if (!type.equals("NominatimDumpFile")) {
+					throw new DumpFormatException(
+							"The first document must be of type 'NominatimDumpFile' but was '" + type + "'.");
+				}
+				readHeader();
+				seenHeader = true;
+				endDocument();
+				return;
+			}
+			switch (type) {
+				case "Place" -> readPlaces();
+				case "CountryInfo" -> readCountryInfo();
+				case "NominatimDumpFile" -> throw new DumpFormatException(
+						"Found a second NominatimDumpFile header (" + r.location() + ").");
+				default -> {
+					logger.log(Level.WARNING, "Ignoring dump document of unknown type ''{0}''.", type);
+					r.skipValue();
+				}
+			}
+			endDocument();
 		}
 
 		/// Reads `{"type": ..., "content":` and leaves the reader at the content.

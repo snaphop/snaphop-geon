@@ -46,6 +46,10 @@ final class Searcher {
 	/// Only this many of the best preliminary matches are decoded for final scoring.
 	private static final int RESCORE_COUNT = 120;
 
+	/// In the lenient pass, words with more postings than this (or 1% of all places)
+	/// do not generate candidates.
+	private static final int LENIENT_DRIVER_CAP = 20_000;
+
 	/// Do not expand a prefix over more terms than this; use the prefix list instead.
 	private static final int PREFIX_TERM_CAP = 4096;
 
@@ -246,7 +250,8 @@ final class Searcher {
 	/// characters, 1 up to 5, otherwise 2. The first character must match.
 	private void resolveFuzzy(Token t) {
 		int maxDistance = t.length <= 2 ? 0 : t.length <= 5 ? 1 : 2;
-		if (maxDistance == 0 || t.fuzzyIds.length > 0) {
+		if (maxDistance == 0 || t.fuzzyIds.length > 0 || t.exactId >= 0 || (t.prefix && t.prefixTo > t.prefixFrom)) {
+			// Only words that match nothing as typed are treated as typos.
 			return;
 		}
 		String head = t.text.substring(0, t.text.offsetByCodePoints(0, 1));
@@ -282,15 +287,34 @@ final class Searcher {
 		var entries = new Forward.Entries();
 		var docIds = new IntList();
 		var seen = new HashSet<Integer>();
-		for (boolean secondary : new boolean[] { false, true }) {
+		Token driver = lenient ? null : cheapest(tokens);
+		// Phases, each checked in importance order until MATCH_TARGET matches:
+		// 0: places with the driving word exactly in a name (only for a prefix driver,
+		//    so a place named exactly "Ott" is not crowded out by important "Ott..." ones),
+		// 1: primary postings, 2: secondary postings.
+		for (int phase = 0; phase < 3; phase++) {
+			boolean secondary = phase == 2;
 			docIds.clear();
-			if (lenient) {
+			if (phase == 0) {
+				if (driver == null || !driver.prefix || driver.exactId < 0) {
+					continue;
+				}
+				terms.docs(driver.exactId, false, CANDIDATE_CAP, docIds);
+			}
+			else if (lenient) {
+				// Words such as "de" or "route" match a large share of all places; they
+				// still have to match, but reading their postings would cost more than
+				// checking them on the candidates the rarer words produce.
+				long common = Math.max(LENIENT_DRIVER_CAP, docs.count() / 100);
+				boolean anyRare = tokens.stream().anyMatch(t -> cost(t) <= common || t.fuzzyIds.length > 0);
 				for (Token t : tokens) {
-					readDocs(t, secondary, true, docIds);
+					if (!anyRare || cost(t) <= common || t.fuzzyIds.length > 0) {
+						readDocs(t, secondary, true, docIds);
+					}
 				}
 			}
 			else {
-				readDocs(cheapest(tokens), secondary, false, docIds);
+				readDocs(java.util.Objects.requireNonNull(driver), secondary, false, docIds);
 			}
 			docIds.sortUniqueTruncate(CANDIDATE_CAP);
 			for (int i = 0; i < docIds.size() && out.size() < MATCH_TARGET; i++) {
@@ -384,6 +408,13 @@ final class Searcher {
 		int unmatched = 0;
 		for (int ti = 0; ti < tokens.size(); ti++) {
 			Token t = tokens.get(ti);
+			TokenMatch repeat = repeatedMatch(tokens, matches, ti);
+			if (repeat != null) {
+				// A word repeated in the query, as in "Meyrin 171, Meyrin", may match the
+				// same term again: the forward index keeps each term once per place.
+				matches[ti] = new TokenMatch(t, repeat.quality(), repeat.field());
+				continue;
+			}
 			double best = 0;
 			int bestIndex = -1;
 			int bestField = 0;
@@ -432,6 +463,16 @@ final class Searcher {
 			matches[ti] = new TokenMatch(t, best, bestField);
 		}
 		return matches;
+	}
+
+	private static @Nullable TokenMatch repeatedMatch(List<Token> tokens, TokenMatch[] matches, int index) {
+		Token t = tokens.get(index);
+		for (int i = 0; i < index; i++) {
+			if (matches[i] != null && tokens.get(i).text.equals(t.text) && tokens.get(i).prefix == t.prefix) {
+				return matches[i];
+			}
+		}
+		return null;
 	}
 
 	private List<Hit> rank(List<Candidate> candidates, Scoring scoring, QueryOptions o) {

@@ -19,7 +19,8 @@ import ai.snaphop.geon.Place;
 /// relevance = 0.55 * text + 0.45 * completeness
 /// text      = sum(token length * match quality * field weight) / sum(token length)
 /// completeness = share of the result's own name (or street and house number)
-///                that the query covers
+///                that the query covers; a prefix covers only the typed share of
+///                a word
 /// standing  = importance                                   without location bias
 ///           = scale * importance + (1 - scale) * proximity with location bias
 /// ```
@@ -213,23 +214,32 @@ final class Scoring {
 		if (identity.isEmpty()) {
 			return 0;
 		}
-		int covered = 0;
+		double covered = 0;
 		for (String word : identity) {
+			double best = 0;
 			for (Searcher.TokenMatch m : matches) {
-				if (m != null && covers(m.token(), word)) {
-					covered++;
-					break;
+				if (m != null) {
+					best = Math.max(best, coverage(m.token(), word));
 				}
 			}
+			covered += best;
 		}
-		return (double) covered / identity.size();
+		return covered / identity.size();
 	}
 
-	private static boolean covers(Searcher.Token t, String word) {
-		if (word.equals(t.text) || (t.prefix && word.startsWith(t.text))) {
-			return true;
+	/// How much of a word a query token covers: all of it when equal, the typed share
+	/// when it is a prefix (`de` covers a third of `denner`), and most of it for a typo.
+	private static double coverage(Searcher.Token t, String word) {
+		if (word.equals(t.text)) {
+			return 1.0;
 		}
-		return t.fuzzyIds.length > 0 && EditDistance.bounded(t.text, word, 2) <= (t.length <= 5 ? 1 : 2);
+		if (t.prefix && word.startsWith(t.text)) {
+			return (double) t.length / word.codePointCount(0, word.length());
+		}
+		if (t.fuzzyIds.length > 0 && EditDistance.bounded(t.text, word, 2) <= (t.length <= 5 ? 1 : 2)) {
+			return 0.8;
+		}
+		return 0;
 	}
 
 }
