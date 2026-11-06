@@ -1,0 +1,14 @@
+target
+*.class
+*.log
+*.iml
+.idea
+.vscode
+.classpath
+.project
+.settings
+.factorypath
+.DS_Store
+# downloaded test data (OpenStreetMap, ODbL) and local index files
+/data
+*.geon
