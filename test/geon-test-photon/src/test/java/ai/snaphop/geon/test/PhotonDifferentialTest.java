@@ -55,6 +55,10 @@ class PhotonDifferentialTest {
 		SAME,
 		/// Same status and the same places in the same order.
 		SAME_PLACES,
+		/// Same status and the same JSON once the items of every `[...]` list inside a
+		/// string are sorted. Photon lists allowed parameters from a `Set.of`, whose order
+		/// changes from run to run.
+		SAME_IGNORING_LIST_ORDER,
 		/// Same status and the same places, in any order.
 		SAME_SET,
 		/// Same status and the same best place.
@@ -117,7 +121,7 @@ class PhotonDifferentialTest {
 
 		ERROR_MISSING_Q(Mode.SAME, "/api"),
 
-		ERROR_UNKNOWN_PARAMETER(Mode.SAME, "/api?q=x&bogus=1"),
+		ERROR_UNKNOWN_PARAMETER(Mode.SAME_IGNORING_LIST_ORDER, "/api?q=x&bogus=1"),
 
 		ERROR_LIMIT_NOT_A_NUMBER(Mode.SAME, "/api?q=x&limit=abc"),
 
@@ -139,7 +143,9 @@ class PhotonDifferentialTest {
 
 		ERROR_STRUCTURED_EMPTY(Mode.SAME, "/structured"),
 
-		ERROR_REVERSE_UNKNOWN_PARAMETER(Mode.SAME, "/reverse?lat=1&lon=1&foo=1"),
+		ERROR_STRUCTURED_UNKNOWN_PARAMETER(Mode.SAME_IGNORING_LIST_ORDER, "/structured?foo=1"),
+
+		ERROR_REVERSE_UNKNOWN_PARAMETER(Mode.SAME_IGNORING_LIST_ORDER, "/reverse?lat=1&lon=1&foo=1"),
 
 		ERROR_REVERSE_RADIUS(Mode.SAME, "/reverse?lat=1&lon=1&radius=abc"),
 
@@ -173,6 +179,10 @@ class PhotonDifferentialTest {
 				assertEquals(expected.status(), actual.status(), context);
 				assertEquals(places(expected.body()), places(actual.body()), context);
 			}
+			case SAME_IGNORING_LIST_ORDER -> {
+				assertEquals(expected.status(), actual.status(), context);
+				assertEquals(sortLists(expected.body()), sortLists(actual.body()), context);
+			}
 			case SAME_SET -> {
 				assertEquals(expected.status(), actual.status(), context);
 				assertEquals(new java.util.TreeSet<>(places(expected.body())), new java.util.TreeSet<>(places(actual.body())),
@@ -190,6 +200,14 @@ class PhotonDifferentialTest {
 			}
 			case DIFFERENT -> assertNotEquals(expected.toString(), actual.toString(), context);
 		}
+	}
+
+	private static final java.util.regex.Pattern LIST = java.util.regex.Pattern.compile("\\[([^\\[\\]\"]*)\\]");
+
+	/// Sorts the comma separated items of each `[...]` list inside the text.
+	static String sortLists(String text) {
+		return LIST.matcher(text).replaceAll(m -> java.util.regex.Matcher.quoteReplacement("["
+				+ String.join(", ", java.util.Arrays.stream(m.group(1).split(",\\s*")).sorted().toList()) + "]"));
 	}
 
 	@SuppressWarnings("unchecked")

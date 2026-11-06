@@ -15,6 +15,7 @@ import java.util.zip.GZIPInputStream;
 
 import org.jspecify.annotations.Nullable;
 
+import ai.snaphop.geon.Synonyms;
 import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
@@ -22,6 +23,7 @@ import ai.snaphop.geon.http.HttpServer;
 import ai.snaphop.geon.index.FileIndex;
 import ai.snaphop.geon.index.IndexWriter;
 import ai.snaphop.geon.photon.PhotonApi;
+import ai.snaphop.geon.photon.PhotonSynonyms;
 import io.jstach.rainbowgum.RainbowGum;
 
 /// The `geon` command.
@@ -75,6 +77,7 @@ public final class Main {
 			  -default-language L  Language when a request names none (default: default).
 			  -max-results N       Most results for /api and /structured (default: 50).
 			  -max-reverse-results N  Most results for /reverse (default: 50).
+			  -synonym-file FILE   Synonyms and classification terms in Photon's JSON format.
 			""";
 
 	private static final Set<String> IGNORED = Set.of("cluster", "transport-addresses", "j", "query-timeout");
@@ -112,7 +115,7 @@ public final class Main {
 						warnings), warnings, out);
 				case "serve" -> serve(Options.parse(rest, Set.of("cors-any"),
 						Set.of("data-dir", "index", "listen-ip", "listen-port", "cors-origin", "default-language",
-								"max-results", "max-reverse-results"),
+								"max-results", "max-reverse-results", "synonym-file"),
 						IGNORED, warnings), warnings, out);
 				case "version" -> out.println("geon " + version());
 				default -> throw new Options.UsageException(
@@ -228,7 +231,16 @@ public final class Main {
 					+ ". Run 'geon import' first or point -data-dir or -index at an existing index.");
 		}
 		long start = System.nanoTime();
-		var index = FileIndex.open(file);
+		String synonymFile = o.valueOrNull("synonym-file");
+		Synonyms synonyms = Synonyms.NONE;
+		if (synonymFile != null) {
+			Path path = Path.of(synonymFile);
+			if (!Files.isReadable(path)) {
+				throw new Options.UsageException("Cannot read the synonym file " + path.toAbsolutePath() + ".");
+			}
+			synonyms = PhotonSynonyms.load(path);
+		}
+		var index = FileIndex.open(file, synonyms);
 		var cors = o.has("cors-any") ? Cors.ANY : new Cors(false, o.list("cors-origin"));
 		var api = PhotonApi.builder(index)
 			.defaultLanguage(o.value("default-language", "default"))

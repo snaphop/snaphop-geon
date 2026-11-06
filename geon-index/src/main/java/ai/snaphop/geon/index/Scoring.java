@@ -41,6 +41,10 @@ final class Scoring {
 
 	static final double[] FUZZY_QUALITY = { 1.0, 0.7, 0.5 };
 
+	/// A word that names the place's type through a classification term, such as
+	/// `station` for a railway station.
+	static final double CLASSIFICATION_QUALITY = 0.8;
+
 	static final double TARGET_BONUS = 0.1;
 
 	static final double ADDRESS_BONUS = 0.1;
@@ -230,7 +234,7 @@ final class Scoring {
 	/// How much of a word a query token covers: all of it when equal, the typed share
 	/// when it is a prefix (`de` covers a third of `denner`), and most of it for a typo.
 	private static double coverage(Searcher.Token t, String word) {
-		if (word.equals(t.text)) {
+		if (word.equals(t.text) || t.synonymTexts.contains(word)) {
 			return 1.0;
 		}
 		if (t.prefix && word.startsWith(t.text)) {

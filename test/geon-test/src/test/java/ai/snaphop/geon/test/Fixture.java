@@ -12,6 +12,7 @@ import java.util.Objects;
 
 import org.jspecify.annotations.Nullable;
 
+import ai.snaphop.geon.Synonyms;
 import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
@@ -42,6 +43,11 @@ final class Fixture implements AutoCloseable {
 
 	/// Like [#start(String, Path)] with an import memory budget in bytes; 0 for the default.
 	static Fixture start(String name, Path dir, long memoryBudget) throws Exception {
+		return start(name, dir, memoryBudget, Synonyms.NONE);
+	}
+
+	/// Like [#start(String, Path, long)] with query time synonyms.
+	static Fixture start(String name, Path dir, long memoryBudget, Synonyms synonyms) throws Exception {
 		Path file = dir.resolve(name + ".geon");
 		var reader = DumpReader.builder().extraTags(ExtraTags.ALL).build();
 		try (InputStream in = Objects.requireNonNull(Fixture.class.getResourceAsStream("/fixtures/" + name + ".jsonl"),
@@ -54,7 +60,7 @@ final class Fixture implements AutoCloseable {
 			writer.dataTimestamp(summary.dataTimestamp());
 			writer.finish();
 		}
-		var index = FileIndex.open(file);
+		var index = FileIndex.open(file, synonyms);
 		var server = PhotonApi.builder(index)
 			.version("test", "test")
 			.build()

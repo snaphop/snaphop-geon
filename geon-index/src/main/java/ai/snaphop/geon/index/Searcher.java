@@ -3,15 +3,18 @@ package ai.snaphop.geon.index;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import org.jspecify.annotations.Nullable;
 
 import ai.snaphop.geon.AddressType;
 import ai.snaphop.geon.BBox;
+import ai.snaphop.geon.ClassificationTerm;
 import ai.snaphop.geon.Hit;
 import ai.snaphop.geon.LocationBias;
 import ai.snaphop.geon.Place;
@@ -20,6 +23,7 @@ import ai.snaphop.geon.QueryOptions;
 import ai.snaphop.geon.ReverseQuery;
 import ai.snaphop.geon.SearchQuery;
 import ai.snaphop.geon.StructuredQuery;
+import ai.snaphop.geon.Synonyms;
 
 /// Runs queries against the index sections. Thread safe; all per query state lives
 /// in local objects.
@@ -61,11 +65,33 @@ final class Searcher {
 
 	private final PackedRTree.Reader tree;
 
-	Searcher(DocCodec.Reader docs, Terms terms, Forward forward, PackedRTree.Reader tree) {
+	/// Folded word to the other words of its synonym groups.
+	private final Map<String, List<String>> synonyms = new HashMap<>();
+
+	/// Folded word to the category terms it classifies.
+	private final Map<String, List<String>> classifications = new HashMap<>();
+
+	Searcher(DocCodec.Reader docs, Terms terms, Forward forward, PackedRTree.Reader tree, Synonyms vocabulary) {
 		this.docs = docs;
 		this.terms = terms;
 		this.forward = forward;
 		this.tree = tree;
+		for (Set<String> group : vocabulary.groups()) {
+			var words = group.stream().map(Text::fold).distinct().toList();
+			for (String w : words) {
+				for (String other : words) {
+					if (!other.equals(w)) {
+						synonyms.computeIfAbsent(w, k -> new ArrayList<>()).add(other);
+					}
+				}
+			}
+		}
+		for (ClassificationTerm c : vocabulary.classifications()) {
+			for (String term : c.terms()) {
+				classifications.computeIfAbsent(Text.fold(term), k -> new ArrayList<>())
+					.add(Field.CATEGORY_PREFIX + c.category());
+			}
+		}
 	}
 
 	/// A query token and the term IDs it can match.
@@ -92,6 +118,14 @@ final class Searcher {
 
 		int[] fuzzyDistances = new int[0];
 
+		/// Terms of synonyms of the word; they match like the word itself.
+		int[] synonymIds = new int[0];
+
+		List<String> synonymTexts = List.of();
+
+		/// Category terms the word classifies, such as `osm.railway.station` for `station`.
+		int[] classIds = new int[0];
+
 		Token(String text, boolean prefix, int allowed) {
 			this.text = text;
 			this.length = text.codePointCount(0, text.length());
@@ -100,7 +134,7 @@ final class Searcher {
 		}
 
 		boolean hasStrictTerms() {
-			return exactId >= 0 || (prefix && prefixTo > prefixFrom);
+			return exactId >= 0 || synonymIds.length > 0 || classIds.length > 0 || (prefix && prefixTo > prefixFrom);
 		}
 
 	}
@@ -234,6 +268,30 @@ final class Searcher {
 	private void resolve(Token t) {
 		byte[] bytes = Terms.utf8(t.text);
 		t.exactId = terms.find(bytes);
+		{
+			// Synonyms and classifications apply to every word, as in Photon's multi word
+			// queries; the word being typed matches them as whole words.
+			var texts = synonyms.getOrDefault(t.text, List.of());
+			var found = new IntList();
+			var foundTexts = new ArrayList<String>();
+			for (String w : texts) {
+				int id = terms.find(Terms.utf8(w));
+				if (id >= 0) {
+					found.add(id);
+					foundTexts.add(w);
+				}
+			}
+			t.synonymIds = found.toArray();
+			t.synonymTexts = List.copyOf(foundTexts);
+			found.clear();
+			for (String c : classifications.getOrDefault(t.text, List.of())) {
+				int id = terms.find(Terms.utf8(c));
+				if (id >= 0) {
+					found.add(id);
+				}
+			}
+			t.classIds = found.toArray();
+		}
 		if (t.prefix) {
 			int[] range = terms.prefixRange(bytes);
 			t.prefixFrom = range[0];
@@ -368,6 +426,9 @@ final class Searcher {
 		else if (t.exactId >= 0) {
 			terms.identityDocs(t.exactId, CANDIDATE_CAP, out);
 		}
+		for (int id : t.synonymIds) {
+			terms.identityDocs(id, CANDIDATE_CAP, out);
+		}
 	}
 
 	private void secondaryDocs(Token t, IntList out) {
@@ -380,6 +441,9 @@ final class Searcher {
 		}
 		else if (t.exactId >= 0) {
 			terms.secondaryDocs(t.exactId, CANDIDATE_CAP, out);
+		}
+		for (int id : t.synonymIds) {
+			terms.secondaryDocs(id, CANDIDATE_CAP, out);
 		}
 	}
 
@@ -464,6 +528,9 @@ final class Searcher {
 		else if (t.exactId >= 0) {
 			sum += terms.totalCount(t.exactId) - terms.primaryCount(t.exactId);
 		}
+		for (int id : t.synonymIds) {
+			sum += terms.totalCount(id) - terms.primaryCount(id);
+		}
 		return sum;
 	}
 
@@ -482,6 +549,9 @@ final class Searcher {
 		}
 		else if (t.exactId >= 0) {
 			sum += terms.primaryCount(t.exactId);
+		}
+		for (int id : t.synonymIds) {
+			sum += terms.primaryCount(id);
 		}
 		for (int id : t.fuzzyIds) {
 			sum += terms.primaryCount(id);
@@ -507,18 +577,36 @@ final class Searcher {
 		return best;
 	}
 
+	/// How many postings a token would read to drive the strict pass. A token with
+	/// nothing to read, or one that only names a type, never drives.
 	private long cost(Token t) {
+		if (t.classIds.length > 0) {
+			// A classification alone never names a place, so another word drives.
+			return Long.MAX_VALUE - 2;
+		}
+		long sum = 0;
+		boolean any = false;
 		if (t.prefix) {
 			if (t.prefixListId >= 0) {
-				return terms.totalCount(t.prefixListId);
+				sum += terms.totalCount(t.prefixListId);
+				any = true;
 			}
-			long sum = 0;
-			for (int id = t.prefixFrom; id < t.prefixTo; id++) {
-				sum += terms.totalCount(id);
+			else {
+				for (int id = t.prefixFrom; id < t.prefixTo; id++) {
+					sum += terms.totalCount(id);
+					any = true;
+				}
 			}
-			return sum;
 		}
-		return t.exactId >= 0 ? terms.totalCount(t.exactId) : Long.MAX_VALUE;
+		else if (t.exactId >= 0) {
+			sum += terms.totalCount(t.exactId);
+			any = true;
+		}
+		for (int id : t.synonymIds) {
+			sum += terms.totalCount(id);
+			any = true;
+		}
+		return any ? sum : Long.MAX_VALUE;
 	}
 
 	private void readDocs(Token t, boolean secondary, boolean withFuzzy, IntList out) {
@@ -538,6 +626,9 @@ final class Searcher {
 		}
 		else if (t.exactId >= 0) {
 			terms.docs(t.exactId, secondary, CANDIDATE_CAP, out);
+		}
+		for (int id : t.synonymIds) {
+			terms.docs(id, secondary, CANDIDATE_CAP, out);
 		}
 		if (withFuzzy) {
 			for (int id : t.fuzzyIds) {
@@ -576,6 +667,29 @@ final class Searcher {
 					best = Scoring.fieldWeight(field, address);
 					bestIndex = i;
 					bestField = field;
+				}
+			}
+			for (int id : t.synonymIds) {
+				int i = e.lowerBound(id);
+				if (i < e.size && e.termIds[i] == id && !used[i] && (e.masks[i] & t.allowed) != 0) {
+					int field = Scoring.bestField(e.masks[i] & t.allowed);
+					double q = Scoring.fieldWeight(field, address);
+					if (q > best) {
+						best = q;
+						bestIndex = i;
+						bestField = field;
+					}
+				}
+			}
+			for (int id : t.classIds) {
+				int i = e.lowerBound(id);
+				if (i < e.size && e.termIds[i] == id && !used[i] && (e.masks[i] & Field.CATEGORY.bit) != 0) {
+					double q = Scoring.CLASSIFICATION_QUALITY;
+					if (q > best) {
+						best = q;
+						bestIndex = i;
+						bestField = Field.CATEGORY.ordinal();
+					}
 				}
 			}
 			if (t.prefix && best < 1) {

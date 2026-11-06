@@ -17,6 +17,7 @@ import ai.snaphop.geon.IndexInfo;
 import ai.snaphop.geon.ReverseQuery;
 import ai.snaphop.geon.SearchQuery;
 import ai.snaphop.geon.StructuredQuery;
+import ai.snaphop.geon.Synonyms;
 
 /// A [GeonIndex] backed by a memory mapped file written by [IndexWriter].
 ///
@@ -46,6 +47,16 @@ public final class FileIndex implements GeonIndex {
 	/// @throws IOException if the file cannot be read or is not a Geon index of a
 	///   supported version.
 	public static FileIndex open(Path file) throws IOException {
+		return open(file, Synonyms.NONE);
+	}
+
+	/// Opens an index file with query time synonyms and classification terms.
+	/// @param file the file written by [IndexWriter].
+	/// @param synonyms the vocabulary to apply to queries.
+	/// @return the open index.
+	/// @throws IOException if the file cannot be read or is not a Geon index of a
+	///   supported version.
+	public static FileIndex open(Path file, Synonyms synonyms) throws IOException {
 		Arena arena = Arena.ofShared();
 		try {
 			MemorySegment all;
@@ -71,7 +82,7 @@ public final class FileIndex implements GeonIndex {
 				long base = Layout.HEADER_FIXED + (long) Layout.SECTION_ENTRY * i;
 				sections[i] = all.asSlice(Seg.i64(all, base), Seg.i64(all, base + 8));
 			}
-			return open(file, arena, sections);
+			return open(file, arena, sections, synonyms);
 		}
 		catch (IOException | RuntimeException e) {
 			arena.close();
@@ -79,7 +90,7 @@ public final class FileIndex implements GeonIndex {
 		}
 	}
 
-	private static FileIndex open(Path file, Arena arena, MemorySegment[] sections) {
+	private static FileIndex open(Path file, Arena arena, MemorySegment[] sections, Synonyms synonyms) {
 		MemorySegment meta = sections[Layout.Section.META.ordinal()];
 		long[] pos = { 0 };
 		int keyCount = Seg.varint32(meta, pos);
@@ -114,7 +125,7 @@ public final class FileIndex implements GeonIndex {
 		var tree = new PackedRTree.Reader(sections[Layout.Section.RTREE.ordinal()], docs);
 		var info = new IndexInfo(timestamp == Long.MIN_VALUE ? null : Instant.ofEpochMilli(timestamp), languages,
 				geometries, placeCount);
-		var searcher = new Searcher(docs, terms, new Forward(docs), tree);
+		var searcher = new Searcher(docs, terms, new Forward(docs), tree, synonyms);
 		return new FileIndex(file, arena, info, searcher);
 	}
 

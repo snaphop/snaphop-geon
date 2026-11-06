@@ -35,6 +35,11 @@ final class PhotonProcess implements AutoCloseable {
 	}
 
 	static PhotonProcess start(String fixture, Path dir) throws Exception {
+		return start(fixture, dir, List.of());
+	}
+
+	/// Like [#start(String, Path)] with extra `serve` options, such as `-synonym-file`.
+	static PhotonProcess start(String fixture, Path dir, List<String> serveOptions) throws Exception {
 		Path jar = jar();
 		Path dump = dir.resolve(fixture + ".jsonl");
 		try (InputStream in = Objects.requireNonNull(
@@ -48,9 +53,10 @@ final class PhotonProcess implements AutoCloseable {
 		try (var socket = new ServerSocket(0)) {
 			port = socket.getLocalPort();
 		}
-		var process = new ProcessBuilder(java(), "-jar", jar.toString(), "serve", "-data-dir", data.toString(),
-				"-listen-port", Integer.toString(port), "-cors-origin", "example.com")
-			.redirectErrorStream(true)
+		var command = new java.util.ArrayList<>(List.of(java(), "-jar", jar.toString(), "serve", "-data-dir",
+				data.toString(), "-listen-port", Integer.toString(port), "-cors-origin", "example.com"));
+		command.addAll(serveOptions);
+		var process = new ProcessBuilder(command).redirectErrorStream(true)
 			.redirectOutput(dir.resolve("photon-serve.log").toFile())
 			.start();
 		var photon = new PhotonProcess(process, port);
