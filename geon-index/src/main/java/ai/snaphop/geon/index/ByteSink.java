@@ -191,6 +191,14 @@ final class ByteSink implements AutoCloseable {
 		size = 0;
 	}
 
+	/// Feeds an in memory sink's content to a digest.
+	void digestInto(java.security.MessageDigest digest) {
+		if (channel != null) {
+			throw new IllegalStateException("A file sink cannot be digested.");
+		}
+		digest.update(bytes, 0, size);
+	}
+
 	/// Appends an in memory sink's content to another sink.
 	void copyTo(ByteSink other) {
 		if (channel != null) {

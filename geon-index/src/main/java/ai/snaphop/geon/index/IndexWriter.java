@@ -20,11 +20,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Set;
 
 import org.jspecify.annotations.Nullable;
 
-import ai.snaphop.geon.AddressType;
 import ai.snaphop.geon.IndexInfo;
 import ai.snaphop.geon.Place;
 
@@ -65,7 +63,12 @@ public final class IndexWriter implements AutoCloseable {
 	static final int PREFIX_LIST_CAP = 1024;
 
 	/// Estimated bytes of memory per term in a postings run, beyond its doc IDs.
-	private static final int RUN_TERM_OVERHEAD = 96;
+	/// Estimated heap bytes per term in a postings run beyond its doc IDs: the map
+	/// entry, the boxed key, the array of three lists and their initial arrays.
+	private static final int RUN_TERM_OVERHEAD = 256;
+
+	/// Estimated heap bytes per doc ID in a postings run, allowing for list growth.
+	private static final int RUN_DOC_BYTES = 8;
 
 	private static final System.Logger logger = System.getLogger(IndexWriter.class.getName());
 
@@ -100,16 +103,24 @@ public final class IndexWriter implements AutoCloseable {
 
 	private final List<String> termStrings = new ArrayList<>();
 
-	private record AddressKey(Map<AddressType, Map<String, String>> parts, Set<String> context,
-			@Nullable String postcode, @Nullable String countryCode) {
+	/// An address set is identified by the 128 bit MD5 of its canonical form, so only
+	/// the hash and an offset stay in memory; the set itself goes to `addresses.spill`.
+	private record AddressHash(long high, long low) {
 	}
 
-	private final Map<AddressKey, Integer> addressIds = new HashMap<>();
+	private final Map<AddressHash, Integer> addressIds = new HashMap<>();
 
-	private final List<AddressKey> addresses = new ArrayList<>();
+	/// Per address set, the offset of its record in the address spill: its provisional
+	/// term list, then the set encoded as in the `ADDRESS` section.
+	private long[] addressOffsets = new long[1024];
 
-	/// Per address set: provisional term ID in the high and mask in the low 32 bits.
-	private final List<long[]> addressTerms = new ArrayList<>();
+	private int addressCount;
+
+	private final ByteSink addressSpill;
+
+	private final ByteSink canonical = new ByteSink(1 << 10);
+
+	private final java.security.MessageDigest md5;
 
 	private long[] sortKeys = new long[1024];
 
@@ -130,6 +141,13 @@ public final class IndexWriter implements AutoCloseable {
 		this.work = Files.createTempDirectory(dir, ".geon-import-");
 		this.spill = ByteSink.toFile(work.resolve("places.spill"));
 		this.stringSink = ByteSink.toFile(work.resolve("strings"));
+		this.addressSpill = ByteSink.toFile(work.resolve("addresses.spill"));
+		try {
+			this.md5 = java.security.MessageDigest.getInstance("MD5");
+		}
+		catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException("MD5 is required by every Java platform", e);
+		}
 		this.strings = new DocCodec.StringPool(stringSink);
 	}
 
@@ -154,14 +172,7 @@ public final class IndexWriter implements AutoCloseable {
 			tagIds.put(tagKey, tagId);
 			tags.i64(strings.ref(place.osmKey())).i64(strings.ref(place.osmValue()));
 		}
-		var key = new AddressKey(place.address(), place.context(), place.postcode(), place.countryCode());
-		Integer setId = addressIds.get(key);
-		if (setId == null) {
-			setId = addresses.size();
-			addressIds.put(key, setId);
-			addresses.add(key);
-			addressTerms.add(provisional(DocTerms.address(key.parts(), key.context(), key.postcode(), key.countryCode())));
-		}
+		int setId = addressSet(place);
 		if (count == sortKeys.length) {
 			sortKeys = Arrays.copyOf(sortKeys, count * 2);
 			spillOffsets = Arrays.copyOf(spillOffsets, count * 2);
@@ -177,6 +188,41 @@ public final class IndexWriter implements AutoCloseable {
 			spill.varint(e >>> 32).varint((int) e);
 		}
 		count++;
+	}
+
+	/// Finds or adds the place's address set.
+	private int addressSet(Place place) {
+		canonical.clearMemory();
+		place.address().forEach((type, names) -> {
+			canonical.u8(type.ordinal());
+			new java.util.TreeMap<>(names).forEach((k, v) -> canonical.utf8(k).utf8(v));
+			canonical.u8(0xFF);
+		});
+		canonical.u8(0xFE);
+		new java.util.TreeSet<>(place.context()).forEach(canonical::utf8);
+		canonical.u8(0xFE).utf8(String.valueOf(place.postcode())).utf8(String.valueOf(place.countryCode()));
+		md5.reset();
+		canonical.digestInto(md5);
+		var digest = java.nio.ByteBuffer.wrap(md5.digest());
+		var hash = new AddressHash(digest.getLong(), digest.getLong());
+		Integer setId = addressIds.get(hash);
+		if (setId != null) {
+			return setId;
+		}
+		setId = addressCount++;
+		addressIds.put(hash, setId);
+		if (setId == addressOffsets.length) {
+			addressOffsets = Arrays.copyOf(addressOffsets, setId * 2);
+		}
+		addressOffsets[setId] = addressSpill.size();
+		long[] terms = provisional(
+				DocTerms.address(place.address(), place.context(), place.postcode(), place.countryCode()));
+		addressSpill.varint(terms.length);
+		for (long e : terms) {
+			addressSpill.varint(e >>> 32).varint((int) e);
+		}
+		DocCodec.encodeAddress(place.address(), place.context(), place.postcode(), strings, keys, addressSpill);
+		return setId;
 	}
 
 	private long[] provisional(Map<String, Integer> terms) {
@@ -210,9 +256,11 @@ public final class IndexWriter implements AutoCloseable {
 		}
 		finished = true;
 		spill.close();
+		addressSpill.close();
 		long start = System.nanoTime();
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment places = map(spill.path(), arena);
+			MemorySegment addressRecords = map(addressSpill.path(), arena);
 			Arrays.sort(sortKeys, 0, count);
 			int[] rank = rankTerms();
 			var sections = new Sections(work);
@@ -237,8 +285,12 @@ public final class IndexWriter implements AutoCloseable {
 					int mask = Seg.varint32(places, pos);
 					runs.add(term, doc, DocTerms.postingClass(mask, hasHouseNumber));
 				}
-				for (long e : addressTerms.get(setId)) {
-					runs.add((int) (e >>> 32), doc, DocTerms.postingClass((int) e, hasHouseNumber));
+				long[] apos = { addressOffsets[setId] };
+				int shared = Seg.varint32(addressRecords, apos);
+				for (int i = 0; i < shared; i++) {
+					int term = Seg.varint32(addressRecords, apos);
+					int mask = Seg.varint32(addressRecords, apos);
+					runs.add(term, doc, DocTerms.postingClass(mask, hasHouseNumber));
 				}
 			}
 			int[] finalIds = runs.merge(sections);
@@ -274,17 +326,18 @@ public final class IndexWriter implements AutoCloseable {
 			// Address sets, with final term IDs.
 			try (ByteSink index = sections.file(Layout.Section.ADDRESS_INDEX);
 					ByteSink address = sections.file(Layout.Section.ADDRESS)) {
-				for (int setId = 0; setId < addresses.size(); setId++) {
+				for (int setId = 0; setId < addressCount; setId++) {
 					index.i64(address.size());
-					long[] provisionalTerms = addressTerms.get(setId);
-					long[] entries = new long[provisionalTerms.length];
-					for (int i = 0; i < entries.length; i++) {
-						long e = provisionalTerms[i];
-						entries[i] = ((long) finalIds[(int) (e >>> 32)] << 32) | (e & 0xFFFFFFFFL);
+					long[] apos = { addressOffsets[setId] };
+					int n = Seg.varint32(addressRecords, apos);
+					long[] entries = new long[n];
+					for (int i = 0; i < n; i++) {
+						int term = finalIds[Seg.varint32(addressRecords, apos)];
+						entries[i] = ((long) term << 32) | Seg.varint32(addressRecords, apos);
 					}
-					DocCodec.writeTerms(entries, entries.length, address);
-					var key = addresses.get(setId);
-					DocCodec.encodeAddress(key.parts(), key.context(), key.postcode(), strings, keys, address);
+					DocCodec.writeTerms(entries, n, address);
+					long end = setId + 1 < addressCount ? addressOffsets[setId + 1] : addressRecords.byteSize();
+					address.bytes(Seg.bytes(addressRecords, apos[0], (int) (end - apos[0])));
 				}
 			}
 			try (ByteSink tree = sections.file(Layout.Section.RTREE)) {
@@ -296,7 +349,7 @@ public final class IndexWriter implements AutoCloseable {
 			sections.put(Layout.Section.META, meta(runs.termCount));
 			sections.writeIndex(file);
 			logger.log(Level.DEBUG, "Index {0} written: {1} places, {2} address sets, {3} terms", file, count,
-					addresses.size(), runs.termCount);
+					addressCount, runs.termCount);
 		}
 		finally {
 			deleteWork();
@@ -360,7 +413,7 @@ public final class IndexWriter implements AutoCloseable {
 				currentBytes += RUN_TERM_OVERHEAD;
 			}
 			lists[postingClass].add(doc);
-			currentBytes += 4;
+			currentBytes += RUN_DOC_BYTES;
 			if (currentBytes > memoryBudget) {
 				flush();
 			}
@@ -832,6 +885,7 @@ public final class IndexWriter implements AutoCloseable {
 		if (!finished) {
 			finished = true;
 			spill.close();
+			addressSpill.close();
 			stringSink.close();
 			deleteWork();
 		}
