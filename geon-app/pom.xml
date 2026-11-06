@@ -30,22 +30,13 @@
       <artifactId>geon-photon</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.jstach.rainbowgum</groupId>
-      <artifactId>rainbowgum-core</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>io.jstach.rainbowgum</groupId>
-      <artifactId>rainbowgum-jdk</artifactId>
+      <!-- Rainbow Gum, configured from GEON_LOG_*; the only module that uses its API. -->
+      <groupId>ai.snaphop.geon</groupId>
+      <artifactId>geon-logging</artifactId>
     </dependency>
   </dependencies>
 
   <build>
-    <resources>
-      <resource>
-        <directory>src/main/resources</directory>
-        <filtering>true</filtering>
-      </resource>
-    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

@@ -9,36 +9,43 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Properties;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
 import org.jspecify.annotations.Nullable;
 
+import ai.snaphop.geon.GeonVersion;
+import ai.snaphop.geon.IndexInfo;
 import ai.snaphop.geon.Synonyms;
 import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
+import ai.snaphop.geon.http.HttpResponse;
 import ai.snaphop.geon.http.HttpServer;
 import ai.snaphop.geon.http.Metrics;
 import ai.snaphop.geon.index.FileIndex;
 import ai.snaphop.geon.index.IndexWriter;
+import ai.snaphop.geon.logging.GeonLogging;
 import ai.snaphop.geon.photon.PhotonApi;
 import ai.snaphop.geon.photon.PhotonSynonyms;
-import io.jstach.rainbowgum.RainbowGum;
 
 /// The `geon` command.
 ///
 /// ```
-/// geon import -import-file photon-dump.jsonl [-data-dir DIR] [-languages en,de,fr,it]
-///             [-extra-tags ALL|tag,...] [-full-geometries] [-country-codes CC,...]
-/// geon serve  [-data-dir DIR] [-listen-ip IP] [-listen-port 2322] [-cors-any]
-///             [-cors-origin ORIGIN,...] [-default-language LANG]
-///             [-max-results 50] [-max-reverse-results 50]
+/// geon import -import-file photon-dump.jsonl [options]
+/// geon serve [options]
+/// geon version
 /// ```
 ///
-/// Option names follow Photon's, so Photon start scripts work with few changes. The
-/// index is the single file `geon.idx` in the data directory, or the file given
+/// Option names follow Photon's, so Photon start scripts work with few changes. Every
+/// option can also come from an environment variable, `-listen-port` from
+/// `GEON_LISTEN_PORT` for example; see [Options]. Logging is configured with
+/// `GEON_LOG_*` variables, see `geon-logging`.
+///
+/// The index is the single file `geon.idx` in the data directory, or the file given
 /// with `-index`.
 public final class Main {
 
@@ -51,6 +58,10 @@ public final class Main {
 			  import   Build an index from a Nominatim dump file (JSON lines).
 			  serve    Serve the Photon compatible API from an index.
 			  version  Print the version.
+
+			Every option can also be set with an environment variable: -listen-port is
+			GEON_LISTEN_PORT, -cors-any is GEON_CORS_ANY=true. The command line wins.
+			Logging is set with GEON_LOG_* variables (GEON_LOG_level=debug).
 
 			Common options:
 			  -data-dir DIR        Directory holding the index (default: current directory).
@@ -66,23 +77,39 @@ public final class Main {
 			  -country-codes CC,.. Only import these countries.
 			  -import-memory SIZE  Memory for collecting postings before writing them to disk,
 			                       for example 512m or 4g. Default: a quarter of the heap.
-			                       Environment variable: GEON_IMPORT_MEMORY.
 			  -tmp-dir DIR         Directory for temporary import files (default: the index
 			                       directory). They can be larger than the finished index.
 
 			Serve options:
-			  -listen-ip IP        Address to listen on (default: 127.0.0.1).
-			  -listen-port PORT    Port to listen on (default: 2322).
+			  -listen-ip IP        Address of the API (default: 127.0.0.1).
+			  -listen-port PORT    Port of the API (default: 2322).
+			  -admin-ip IP         Address of the admin port (default: 127.0.0.1). Keep it
+			                       private: it serves /metrics, /health and /info.
+			  -admin-port PORT     Admin port (default: 2323), or none.
 			  -cors-any            Allow cross origin requests from any origin.
 			  -cors-origin O,...   Allow cross origin requests from these origins.
 			  -default-language L  Language when a request names none (default: default).
 			  -max-results N       Most results for /api and /structured (default: 50).
 			  -max-reverse-results N  Most results for /reverse (default: 50).
 			  -synonym-file FILE   Synonyms and classification terms in Photon's JSON format.
-			  -metrics-enable prometheus  Serve request and index metrics at /metrics.
+			  -metrics-enable prometheus  Also serve /metrics on the API port, as Photon does.
 			""";
 
 	private static final Set<String> IGNORED = Set.of("cluster", "transport-addresses", "j", "query-timeout");
+
+	private static final Set<String> IMPORT_SWITCHES = Set.of("full-geometries");
+
+	private static final Set<String> IMPORT_OPTIONS = Set.of("data-dir", "index", "import-file", "languages",
+			"extra-tags", "country-codes", "import-memory", "tmp-dir");
+
+	private static final Set<String> SERVE_SWITCHES = Set.of("cors-any");
+
+	private static final Set<String> SERVE_OPTIONS = Set.of("data-dir", "index", "listen-ip", "listen-port",
+			"admin-ip", "admin-port", "cors-origin", "default-language", "max-results", "max-reverse-results",
+			"synonym-file", "metrics-enable");
+
+	/// `GEON_*` variables that are not options: logging and the JVM launcher's options.
+	private static final Set<String> OTHER_VARIABLES = Set.of("GEON_JAVA_OPTS");
 
 	private Main() {
 	}
@@ -91,16 +118,14 @@ public final class Main {
 	/// and 2 on any other failure.
 	/// @param args the arguments.
 	public static void main(String[] args) {
-		// Start logging explicitly: the native image is built with
-		// logging.systemlogger.initialize=false (see doc/dependency-issues.md).
-		RainbowGum.of();
-		int status = run(List.of(args), System.out, System.err);
+		GeonLogging.start();
+		int status = run(List.of(args), System.getenv(), System.out, System.err);
 		if (status != 0) {
 			System.exit(status);
 		}
 	}
 
-	static int run(List<String> args, PrintStream out, PrintStream err) {
+	static int run(List<String> args, Map<String, String> env, PrintStream out, PrintStream err) {
 		if (args.isEmpty() || args.getFirst().equals("-h") || args.getFirst().equals("--help")
 				|| args.getFirst().equals("help")) {
 			out.print(USAGE);
@@ -109,17 +134,14 @@ public final class Main {
 		var rest = args.subList(1, args.size());
 		var warnings = new ArrayList<String>();
 		try {
+			unknownVariables(env).forEach(v -> warnings.add("Ignoring environment variable " + v
+					+ ": no geon option has that name. Options are GEON_ and the option name in upper case."));
 			switch (args.getFirst()) {
-				case "import" -> runImport(Options.parse(rest, Set.of("full-geometries"),
-						Set.of("data-dir", "index", "import-file", "languages", "extra-tags", "country-codes",
-								"import-memory", "tmp-dir"),
-						IGNORED,
-						warnings), warnings, out);
-				case "serve" -> serve(Options.parse(rest, Set.of("cors-any"),
-						Set.of("data-dir", "index", "listen-ip", "listen-port", "cors-origin", "default-language",
-								"max-results", "max-reverse-results", "synonym-file", "metrics-enable"),
-						IGNORED, warnings), warnings, out);
-				case "version" -> out.println("geon " + version());
+				case "import" -> runImport(
+						Options.parse(rest, IMPORT_SWITCHES, IMPORT_OPTIONS, IGNORED, env, warnings), warnings, out);
+				case "serve" -> serve(Options.parse(rest, SERVE_SWITCHES, SERVE_OPTIONS, IGNORED, env, warnings),
+						warnings, out);
+				case "version" -> out.println("geon " + GeonVersion.VERSION + " (" + GeonVersion.COMMIT + ")");
 				default -> throw new Options.UsageException(
 						"Unknown command '" + args.getFirst() + "'. Use import, serve or version.");
 			}
@@ -135,6 +157,19 @@ public final class Main {
 			logger.log(Level.DEBUG, "Command failed", e);
 			return 2;
 		}
+	}
+
+	/// `GEON_*` variables that no command reads, which are likely typos. One env file
+	/// usually serves both commands, so only names unknown to all of them count.
+	static Set<String> unknownVariables(Map<String, String> env) {
+		var known = new TreeSet<String>(OTHER_VARIABLES);
+		for (var names : List.of(IMPORT_SWITCHES, IMPORT_OPTIONS, SERVE_SWITCHES, SERVE_OPTIONS)) {
+			names.forEach(n -> known.add(Options.variable(n)));
+		}
+		return env.keySet()
+			.stream()
+			.filter(v -> v.startsWith(Options.ENV_PREFIX) && !v.startsWith("GEON_LOG_") && !known.contains(v))
+			.collect(Collectors.toCollection(TreeSet::new));
 	}
 
 	private static Path indexFile(Options o) {
@@ -164,7 +199,7 @@ public final class Main {
 			var builder = IndexWriter.builder(index)
 				.languages(languages)
 				.geometries(o.has("full-geometries"))
-				.memoryBudget(memory(o.valueOrNull("import-memory"), System.getenv("GEON_IMPORT_MEMORY")));
+				.memoryBudget(memory(o));
 			String tmp = o.valueOrNull("tmp-dir");
 			if (tmp != null) {
 				builder.tempDirectory(Path.of(tmp));
@@ -179,14 +214,14 @@ public final class Main {
 		}
 	}
 
-	/// Parses a size such as `512m` or `4g` from the option, else the environment variable.
+	/// Parses `-import-memory`, a size such as `512m` or `4g`.
 	/// @return bytes, or 0 for the default.
-	static long memory(@Nullable String option, @Nullable String env) throws Options.UsageException {
-		String value = option != null ? option : env;
-		if (value == null || value.isBlank()) {
+	static long memory(Options o) throws Options.UsageException {
+		String value = o.valueOrNull("import-memory");
+		if (value == null) {
 			return 0;
 		}
-		String v = value.strip().toLowerCase(java.util.Locale.ROOT);
+		String v = value.toLowerCase(java.util.Locale.ROOT);
 		long unit = switch (v.charAt(v.length() - 1)) {
 			case 'k' -> 1L << 10;
 			case 'm' -> 1L << 20;
@@ -202,8 +237,7 @@ public final class Main {
 			return n * unit;
 		}
 		catch (NumberFormatException e) {
-			throw new Options.UsageException("Invalid memory size '" + value + "'"
-					+ (option != null ? " for -import-memory" : " in GEON_IMPORT_MEMORY")
+			throw new Options.UsageException("Invalid memory size '" + value + "' for " + o.source("import-memory")
 					+ ". Use a number of bytes with an optional k, m or g suffix, for example 512m.");
 		}
 	}
@@ -233,8 +267,8 @@ public final class Main {
 					+ ". Run 'geon import' first or point -data-dir or -index at an existing index.");
 		}
 		long start = System.nanoTime();
-		String synonymFile = o.valueOrNull("synonym-file");
 		Synonyms synonyms = Synonyms.NONE;
+		String synonymFile = o.valueOrNull("synonym-file");
 		if (synonymFile != null) {
 			Path path = Path.of(synonymFile);
 			if (!Files.isReadable(path)) {
@@ -242,48 +276,79 @@ public final class Main {
 			}
 			synonyms = PhotonSynonyms.load(path);
 		}
+		String photonMetrics = o.valueOrNull("metrics-enable");
+		if (photonMetrics != null && !photonMetrics.equals("prometheus")) {
+			throw new Options.UsageException("Unsupported " + o.source("metrics-enable") + " value '" + photonMetrics
+					+ "'. The only supported value is prometheus.");
+		}
+		Integer adminPort = adminPort(o);
 		var index = FileIndex.open(file, synonyms);
+		IndexInfo info = index.info();
+		var metrics = new Metrics().gauge("geon_index_places", "Places in the index.", info::placeCount);
 		var cors = o.has("cors-any") ? Cors.ANY : new Cors(false, o.list("cors-origin"));
 		var api = PhotonApi.builder(index)
 			.defaultLanguage(o.value("default-language", "default"))
 			.maxResults(o.integer("max-results", 50))
 			.maxReverseResults(o.integer("max-reverse-results", 50))
-			.version(version(), System.getProperty("geon.gitCommit", "unknown"))
+			.version(GeonVersion.VERSION, GeonVersion.COMMIT)
 			.build();
 		var http = HttpServer.builder()
 			.host(o.value("listen-ip", "127.0.0.1"))
 			.port(o.integer("listen-port", 2322))
-			.cors(cors);
-		String metrics = o.valueOrNull("metrics-enable");
-		if (metrics != null) {
-			if (!metrics.equals("prometheus")) {
-				throw new Options.UsageException(
-						"Unsupported -metrics-enable value '" + metrics + "'. The only supported value is prometheus.");
-			}
-			long places = index.info().placeCount();
-			http.metrics("/metrics", new Metrics().gauge("geon_index_places", "Places in the index.", () -> places));
+			.cors(cors)
+			.metrics(metrics);
+		if (photonMetrics != null) {
+			http.route("/metrics", metrics.handler());
 		}
 		var server = api.routes(http).start();
+		HttpServer admin = null;
+		if (adminPort != null) {
+			admin = HttpServer.builder()
+				.host(o.value("admin-ip", "127.0.0.1"))
+				.port(adminPort)
+				.route("/metrics", metrics.handler())
+				.route("/health", req -> HttpResponse.json(200, "{\"status\":\"Ok\"}"))
+				.route("/info", req -> HttpResponse.json(200, info(info)))
+				.start();
+		}
+		HttpServer adminServer = admin;
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+			if (adminServer != null) {
+				adminServer.close();
+			}
 			server.close();
 			index.close();
 		}, "geon-shutdown"));
-		out.printf("Serving %s (%,d places) on http://%s:%d/ (started in %.0f ms)%n", file, index.info().placeCount(),
-				o.value("listen-ip", "127.0.0.1"), server.port(), (System.nanoTime() - start) / 1e6);
+		out.printf("Serving %s (%,d places) on http://%s:%d/%s (started in %.0f ms)%n", file, info.placeCount(),
+				o.value("listen-ip", "127.0.0.1"), server.port(),
+				admin == null ? "" : ", admin on http://" + o.value("admin-ip", "127.0.0.1") + ":" + admin.port() + "/",
+				(System.nanoTime() - start) / 1e6);
+		out.flush();
 		server.awaitClose();
 	}
 
-	static String version() {
-		var props = new Properties();
-		try (InputStream in = Main.class.getResourceAsStream("version.properties")) {
-			if (in != null) {
-				props.load(in);
-			}
+	/// The admin port, or `null` for `none`.
+	private static @Nullable Integer adminPort(Options o) throws Options.UsageException {
+		String value = o.value("admin-port", "2323");
+		if (value.equals("none")) {
+			return null;
 		}
-		catch (IOException e) {
-			// fall through to unknown
+		return o.integer("admin-port", 2323);
+	}
+
+	private static String info(IndexInfo info) {
+		var sb = new StringBuilder("{\"version\":\"").append(GeonVersion.VERSION)
+			.append("\",\"commit\":\"")
+			.append(GeonVersion.COMMIT)
+			.append("\",\"places\":")
+			.append(info.placeCount())
+			.append(",\"data_timestamp\":")
+			.append(info.dataTimestamp() == null ? "null" : "\"" + info.dataTimestamp() + "\"")
+			.append(",\"languages\":[");
+		for (int i = 0; i < info.languages().size(); i++) {
+			sb.append(i == 0 ? "\"" : ",\"").append(info.languages().get(i)).append('"');
 		}
-		return props.getProperty("version", "unknown");
+		return sb.append("]}").toString();
 	}
 
 }

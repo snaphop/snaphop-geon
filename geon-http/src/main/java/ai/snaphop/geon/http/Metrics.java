@@ -71,6 +71,12 @@ public final class Metrics {
 		latencies.computeIfAbsent(path, k -> new Histogram()).record(nanos);
 	}
 
+	/// A handler that serves [#prometheus()].
+	/// @return the handler.
+	public HttpHandler handler() {
+		return request -> HttpResponse.text(200, "text/plain; version=0.0.4; charset=utf-8", prometheus());
+	}
+
 	/// The current values in the Prometheus text exposition format.
 	/// @return the text.
 	public String prometheus() {

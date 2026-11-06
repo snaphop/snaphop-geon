@@ -34,6 +34,9 @@ java --enable-native-access=ALL-UNNAMED -cp "geon-app-0.1.0-SNAPSHOT.jar:lib/*" 
 curl 'http://localhost:2322/api?q=andorra'
 ```
 
+To run Geon as a service, see [doc/deploy.md](doc/deploy.md): a systemd unit, an
+install script and environment variable configuration.
+
 Import on the JVM (HotSpot): it is several times faster than the native image there.
 `-import-memory` (or `GEON_IMPORT_MEMORY`) bounds the memory used for postings; the
 rest spills to temporary files. Serve with either; the native image starts in about
@@ -49,6 +52,7 @@ rest spills to temporary files. Serve with either; the native image starts in ab
 | `geon-index` | The memory mapped index |
 | `geon-http` | Minimal Netty HTTP server |
 | `geon-photon` | Photon compatible API |
+| `geon-logging` | Rainbow Gum set up from `GEON_LOG_*` variables; the only module using its API |
 | `geon-app` | The `geon` command line |
 | `test/geon-test` | End to end tests |
 | `test/geon-test-photon` | Differential tests against a real Photon (`-Pphoton`) |

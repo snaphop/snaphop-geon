@@ -1,0 +1,42 @@
+# /etc/systemd/system/geon.service, installed by deploy/install.sh (doc/deploy.md).
+# Settings are in /etc/geon/geon.env, not here.
+[Unit]
+Description=Geon geocoder (Photon compatible API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=geon
+Group=geon
+EnvironmentFile=/etc/geon/geon.env
+ExecStart=/usr/local/bin/geon serve
+Restart=on-failure
+RestartSec=5
+# A stop (SIGTERM) ends the process with 143: not a failure.
+SuccessExitStatus=143
+# The index is memory mapped: its pages are page cache, not counted against the
+# heap, so leave the machine's memory for them rather than capping it tightly.
+LimitNOFILE=65536
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/geon
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

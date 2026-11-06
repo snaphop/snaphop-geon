@@ -62,14 +62,15 @@ final class Fixture implements AutoCloseable {
 			writer.finish();
 		}
 		var index = FileIndex.open(file, synonyms);
+		var metrics = new Metrics().gauge("geon_index_places", "Places in the index.", () -> index.info().placeCount());
 		var server = PhotonApi.builder(index)
 			.version("test", "test")
 			.build()
 			.routes(HttpServer.builder()
 				.port(0)
 				.cors(new Cors(false, java.util.List.of("example.com")))
-				.metrics("/metrics", new Metrics().gauge("geon_index_places", "Places in the index.",
-						() -> index.info().placeCount())))
+				.metrics(metrics)
+				.route("/metrics", metrics.handler()))
 			.start();
 		return new Fixture(index, server);
 	}

@@ -4,6 +4,6 @@ module ai.snaphop.geon.app {
 	requires ai.snaphop.geon.dump;
 	requires ai.snaphop.geon.index;
 	requires ai.snaphop.geon.photon;
-	requires io.jstach.rainbowgum;
+	requires ai.snaphop.geon.logging;
 	requires static org.jspecify;
 }

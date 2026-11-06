@@ -179,16 +179,14 @@ public final class HttpServer implements AutoCloseable {
 			return this;
 		}
 
-		/// Records request metrics and serves them at a path in the Prometheus text format.
-		/// Off by default.
-		/// @param path the metrics path, for example `/metrics`.
-		/// @param metrics the metrics, which may carry gauges.
+		/// Records each request's path, status and latency. Off by default. Serve the
+		/// result with a route to [Metrics#handler()], on this or another server.
+		/// @param metrics where to record.
 		/// @return this.
-		public Builder metrics(String path, Metrics metrics) {
+		public Builder metrics(Metrics metrics) {
 			this.metrics = metrics;
 			this.metricsEnabled = true;
-			return route(path, req -> HttpResponse.text(200, "text/plain; version=0.0.4; charset=utf-8",
-					metrics.prometheus()));
+			return this;
 		}
 
 		/// Binds the port and starts serving.

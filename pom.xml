@@ -34,6 +34,7 @@
     <module>geon-index</module>
     <module>geon-http</module>
     <module>geon-photon</module>
+    <module>geon-logging</module>
     <module>geon-app</module>
     <module>test/geon-test</module>
     <module>tools/geon-quality</module>
@@ -121,6 +122,16 @@
         <version>${rainbowgum.version}</version>
       </dependency>
       <dependency>
+        <groupId>io.jstach.rainbowgum</groupId>
+        <artifactId>rainbowgum-keyvalues-contributor</artifactId>
+        <version>${rainbowgum.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ai.snaphop.geon</groupId>
+        <artifactId>geon-logging</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
         <version>${junit.version}</version>
@@ -201,6 +212,16 @@
           <groupId>org.graalvm.buildtools</groupId>
           <artifactId>native-maven-plugin</artifactId>
           <version>1.1.18</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>buildnumber-maven-plugin</artifactId>
+          <version>3.3.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>templating-maven-plugin</artifactId>
+          <version>3.1.1</version>
         </plugin>
       </plugins>
     </pluginManagement>
