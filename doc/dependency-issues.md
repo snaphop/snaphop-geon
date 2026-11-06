@@ -6,6 +6,9 @@ entry here.
 
 ## avaje-json-core 3.16
 
+Both bugs below that have reproductions are still present in 3.17-RC1 (checked
+2026-11-06 with the same reproductions).
+
 ### Streaming: `hasNextElement()` ends an array early at a buffer edge
 
 **The most serious one.** It depends only on where the data falls in the 4096 byte
