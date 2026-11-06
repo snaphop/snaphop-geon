@@ -26,9 +26,12 @@ import java.nio.charset.StandardCharsets;
 /// * `TERMS`: the sorted term dictionary in front coded blocks of [#TERM_BLOCK] terms.
 /// * `TERM_BLOCKS`: the offset (long) of each block in `TERMS`.
 /// * `POSTING_INDEX`: per term ID, a [#POSTING_ENTRY] byte entry: offset (long) into
-///   `POSTINGS`, primary count (int), total count (int).
-/// * `POSTINGS`: per term, delta encoded varint doc IDs: the primary docs first, then
-///   the secondary docs, each list ascending.
+///   `POSTINGS`, then three ints: the identity count, the primary count (identity plus
+///   address street) and the total count.
+/// * `POSTINGS`: per term, three ascending lists of delta encoded varint doc IDs:
+///   * identity: the term is in the place's name or house number;
+///   * address street: the place is an address and the term is in its street;
+///   * secondary: the term is elsewhere in the place's address or context.
 /// * `RTREE`: a packed Hilbert R-tree over place centroids, see [PackedRTree].
 ///
 /// A term list ("forward" entries) is a varint count, then (term ID delta, field mask)
@@ -41,7 +44,7 @@ final class Layout {
 
 	static final byte[] MAGIC = "GEONIDX1".getBytes(StandardCharsets.US_ASCII);
 
-	static final int VERSION = 3;
+	static final int VERSION = 4;
 
 	static final int HEADER_FIXED = 16;
 
@@ -63,7 +66,7 @@ final class Layout {
 
 	static final int TERM_BLOCK = 32;
 
-	static final int POSTING_ENTRY = 16;
+	static final int POSTING_ENTRY = 20;
 
 	/// Coordinates are stored as integers in units of 1e-7 degrees, about 1 cm.
 	static final double COORD_SCALE = 1e7;

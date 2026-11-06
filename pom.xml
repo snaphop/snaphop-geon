@@ -38,6 +38,19 @@
     <module>test/geon-test</module>
   </modules>
 
+  <profiles>
+    <profile>
+      <!--
+        ./mvnw -Pphoton install compares Geon with a real Photon 1.3.0, downloaded on
+        first use (about 100 MB) to ~/.cache/geon. Slow: Photon starts OpenSearch.
+      -->
+      <id>photon</id>
+      <modules>
+        <module>test/geon-test-photon</module>
+      </modules>
+    </profile>
+  </profiles>
+
   <properties>
     <java.release>25</java.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

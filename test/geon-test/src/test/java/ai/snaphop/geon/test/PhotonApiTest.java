@@ -435,47 +435,6 @@ class PhotonApiTest {
 				        "type": "Point",
 				        "coordinates": [10.001, 50.001]
 				      }
-				    },
-				    {
-				      "type": "Feature",
-				      "properties": {
-				        "osm_type": "N",
-				        "osm_id": 600,
-				        "osm_key": "building",
-				        "osm_value": "house",
-				        "type": "house",
-				        "housenumber": "12",
-				        "street": "Main Street",
-				        "city": "Springfield",
-				        "country": "Zedland",
-				        "postcode": "12345",
-				        "countrycode": "ZZ"
-				      },
-				      "geometry": {
-				        "type": "Point",
-				        "coordinates": [10.0012, 50.0012]
-				      }
-				    },
-				    {
-				      "type": "Feature",
-				      "properties": {
-				        "osm_type": "N",
-				        "osm_id": 1100,
-				        "osm_key": "tourism",
-				        "osm_value": "hotel",
-				        "type": "house",
-				        "housenumber": "20",
-				        "name": "Hôtel Lune",
-				        "street": "Main Street",
-				        "city": "Springfield",
-				        "country": "Zedland",
-				        "postcode": "12345",
-				        "countrycode": "ZZ"
-				      },
-				      "geometry": {
-				        "type": "Point",
-				        "coordinates": [10.003, 50.003]
-				      }
 				    }
 				  ]
 				}
@@ -524,26 +483,6 @@ class PhotonApiTest {
 				      "geometry": {
 				        "type": "Point",
 				        "coordinates": [10.002, 50.002]
-				      }
-				    },
-				    {
-				      "type": "Feature",
-				      "properties": {
-				        "osm_type": "N",
-				        "osm_id": 600,
-				        "osm_key": "building",
-				        "osm_value": "house",
-				        "type": "house",
-				        "housenumber": "12",
-				        "street": "Main Street",
-				        "city": "Springfield",
-				        "country": "Zedland",
-				        "postcode": "12345",
-				        "countrycode": "ZZ"
-				      },
-				      "geometry": {
-				        "type": "Point",
-				        "coordinates": [10.0012, 50.0012]
 				      }
 				    }
 				  ]

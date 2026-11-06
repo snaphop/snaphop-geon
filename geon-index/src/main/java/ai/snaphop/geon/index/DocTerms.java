@@ -66,16 +66,26 @@ final class DocTerms {
 		return terms;
 	}
 
-	/// Whether a term in these fields identifies the place itself rather than where it is.
+	/// The term names the place: it is in its name or house number.
+	static final int IDENTITY = 0;
+
+	/// The place is an address and the term is in its street.
+	static final int ADDRESS_STREET = 1;
+
+	/// The term is elsewhere in the place's address or context.
+	static final int SECONDARY = 2;
+
+	/// Which postings list a term of a place goes to.
 	///
-	/// Primary postings are searched first, so a search for `berlin` finds places
-	/// named Berlin before the million addresses that are merely in Berlin.
-	static boolean isPrimary(int mask, boolean hasHouseNumber) {
+	/// Identity and address street postings together are the primary postings, read
+	/// first so a search for `berlin` finds places named Berlin before the million
+	/// addresses that are merely in Berlin. A query must match some word in the
+	/// identity postings, see `Searcher`.
+	static int postingClass(int mask, boolean hasHouseNumber) {
 		if ((mask & (Field.NAME.bit | Field.HOUSENUMBER.bit)) != 0) {
-			return true;
+			return IDENTITY;
 		}
-		// An address is identified by its street and number.
-		return hasHouseNumber && (mask & Field.STREET.bit) != 0;
+		return hasHouseNumber && (mask & Field.STREET.bit) != 0 ? ADDRESS_STREET : SECONDARY;
 	}
 
 	private static void add(Map<String, Integer> terms, String text, Field field) {

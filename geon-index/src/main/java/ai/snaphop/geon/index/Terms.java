@@ -138,29 +138,54 @@ final class Terms {
 		return new int[] { from, to[0] };
 	}
 
-	/// How many docs have the term as a primary term.
-	int primaryCount(int id) {
+	/// How many docs have the term in their name or house number.
+	int identityCount(int id) {
 		return Seg.i32(index, (long) id * Layout.POSTING_ENTRY + 8);
+	}
+
+	/// How many docs have the term as a primary term: identity or address street.
+	int primaryCount(int id) {
+		return Seg.i32(index, (long) id * Layout.POSTING_ENTRY + 12);
 	}
 
 	/// How many docs have the term at all.
 	int totalCount(int id) {
-		return Seg.i32(index, (long) id * Layout.POSTING_ENTRY + 12);
+		return Seg.i32(index, (long) id * Layout.POSTING_ENTRY + 16);
 	}
 
-	/// Adds the doc IDs of a term to `out`: the primary ones, and if `secondary` is set
-	/// the secondary ones too, each in ascending order, at most `max` in total.
+	/// Adds doc IDs of a term to `out`: the primary ones, and if `secondary` is set the
+	/// secondary ones too, at most `max` in total. Each list is ascending, the result as
+	/// a whole is not.
 	void docs(int id, boolean secondary, int max, IntList out) {
+		read(id, 0, secondary ? totalCount(id) : primaryCount(id), max, out);
+	}
+
+	/// Adds the identity doc IDs of a term to `out`, ascending, at most `max`.
+	void identityDocs(int id, int max, IntList out) {
+		read(id, 0, identityCount(id), max, out);
+	}
+
+	/// Adds the secondary doc IDs of a term to `out`, ascending, at most `max`.
+	void secondaryDocs(int id, int max, IntList out) {
+		read(id, primaryCount(id), totalCount(id), max, out);
+	}
+
+	/// Reads entries `[from, to)` of a term's three concatenated lists.
+	private void read(int id, int from, int to, int max, IntList out) {
 		long[] pos = { Seg.i64(index, (long) id * Layout.POSTING_ENTRY) };
+		int identity = identityCount(id);
 		int primary = primaryCount(id);
-		int total = secondary ? totalCount(id) : primary;
 		int doc = 0;
-		for (int i = 0; i < total && i < max; i++) {
-			if (i == primary) {
+		int added = 0;
+		for (int i = 0; i < to && added < max; i++) {
+			if (i == identity || i == primary) {
 				doc = 0;
 			}
 			doc += Seg.varint32(postings, pos);
-			out.add(doc);
+			if (i >= from) {
+				out.add(doc);
+				added++;
+			}
 		}
 	}
 

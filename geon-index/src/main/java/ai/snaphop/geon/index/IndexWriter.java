@@ -235,10 +235,10 @@ public final class IndexWriter implements AutoCloseable {
 				for (int i = 0; i < own; i++) {
 					int term = Seg.varint32(places, pos);
 					int mask = Seg.varint32(places, pos);
-					runs.add(term, doc, DocTerms.isPrimary(mask, hasHouseNumber));
+					runs.add(term, doc, DocTerms.postingClass(mask, hasHouseNumber));
 				}
 				for (long e : addressTerms.get(setId)) {
-					runs.add((int) (e >>> 32), doc, DocTerms.isPrimary((int) e, hasHouseNumber));
+					runs.add((int) (e >>> 32), doc, DocTerms.postingClass((int) e, hasHouseNumber));
 				}
 			}
 			int[] finalIds = runs.merge(sections);
@@ -352,14 +352,14 @@ public final class IndexWriter implements AutoCloseable {
 			this.rank = rank;
 		}
 
-		void add(int term, int doc, boolean primary) {
+		void add(int term, int doc, int postingClass) {
 			IntList[] lists = current.get(term);
 			if (lists == null) {
-				lists = new IntList[] { new IntList(), new IntList() };
+				lists = new IntList[] { new IntList(), new IntList(), new IntList() };
 				current.put(term, lists);
 				currentBytes += RUN_TERM_OVERHEAD;
 			}
-			lists[primary ? 0 : 1].add(doc);
+			lists[postingClass].add(doc);
 			currentBytes += 4;
 			if (currentBytes > memoryBudget) {
 				flush();
@@ -367,7 +367,7 @@ public final class IndexWriter implements AutoCloseable {
 		}
 
 		/// Writes the current run: per term in rank order, the provisional term ID, then
-		/// the primary and the secondary doc IDs as counts and deltas.
+		/// the identity, address street and secondary doc IDs as counts and deltas.
 		private void flush() {
 			if (current.isEmpty()) {
 				return;
@@ -381,6 +381,7 @@ public final class IndexWriter implements AutoCloseable {
 					out.varint(term);
 					deltas(out, lists[0]);
 					deltas(out, lists[1]);
+					deltas(out, lists[2]);
 				}
 			}
 			catch (IOException e) {
@@ -458,11 +459,14 @@ public final class IndexWriter implements AutoCloseable {
 						queue.add(cursor);
 					}
 				}
-				var primary = new IntList();
+				var identity = new IntList();
+				var street = new IntList();
 				var secondary = new IntList();
+				var primary = new IntList();
 				while (!queue.isEmpty()) {
 					int term = queue.peek().term;
-					primary.clear();
+					identity.clear();
+					street.clear();
 					secondary.clear();
 					// Runs hold ascending doc ranges, so concatenating in run order keeps
 					// each list ascending.
@@ -471,26 +475,36 @@ public final class IndexWriter implements AutoCloseable {
 						parts.add(queue.poll());
 					}
 					parts.sort(Comparator.comparingInt(c -> c.run));
+					// A run holds the three lists per term; keep them apart while
+					// concatenating runs.
+					var streets = new ArrayList<IntList>();
 					var secondaries = new ArrayList<IntList>();
 					for (Cursor c : parts) {
-						c.readDocs(primary);
-						var s = new IntList();
-						c.readDocs(s);
-						secondaries.add(s);
+						c.readDocs(identity);
+						var st = new IntList();
+						c.readDocs(st);
+						streets.add(st);
+						var se = new IntList();
+						c.readDocs(se);
+						secondaries.add(se);
 						if (c.advance()) {
 							queue.add(c);
 						}
 					}
+					streets.forEach(street::addAll);
 					secondaries.forEach(secondary::addAll);
 					String text = termStrings.get(term);
 					boolean category = text.startsWith(Field.CATEGORY_PREFIX);
 					ByteSink out = category ? categories : words;
-					(category ? categoryEntries : wordEntries).add(out.size(), primary.size(),
-							primary.size() + secondary.size());
-					writeDocs(out, primary);
+					(category ? categoryEntries : wordEntries).add(out.size(), identity.size(),
+							identity.size() + street.size(), identity.size() + street.size() + secondary.size());
+					writeDocs(out, identity);
+					writeDocs(out, street);
 					writeDocs(out, secondary);
 					(category ? categoryTerms : wordTerms).add(term);
 					if (!category) {
+						primary.clear();
+						mergeSorted(identity, street, primary);
 						prefixLists.add(text, primary);
 					}
 				}
@@ -534,6 +548,19 @@ public final class IndexWriter implements AutoCloseable {
 			}
 		}
 
+	}
+
+	private static void mergeSorted(IntList a, IntList b, IntList out) {
+		int i = 0;
+		int j = 0;
+		while (i < a.size() || j < b.size()) {
+			if (j >= b.size() || (i < a.size() && a.get(i) <= b.get(j))) {
+				out.add(a.get(i++));
+			}
+			else {
+				out.add(b.get(j++));
+			}
+		}
 	}
 
 	private static void writeDocs(ByteSink out, IntList docs) {
@@ -647,7 +674,7 @@ public final class IndexWriter implements AutoCloseable {
 			for (var e : done) {
 				terms.add(e.getKey());
 				int[] list = e.getValue();
-				entries.add(out.size(), list.length, list.length);
+				entries.add(out.size(), list.length, list.length, list.length);
 				int previous = 0;
 				for (int doc : list) {
 					out.varint(doc - previous);
@@ -664,22 +691,25 @@ public final class IndexWriter implements AutoCloseable {
 
 		private long[] offsets = new long[1024];
 
-		private long[] counts = new long[1024];
+		private int[] counts = new int[3 * 1024];
 
 		private int size;
 
-		void add(long offset, int primary, int total) {
+		void add(long offset, int identity, int primary, int total) {
 			if (size == offsets.length) {
 				offsets = Arrays.copyOf(offsets, size * 2);
-				counts = Arrays.copyOf(counts, size * 2);
+				counts = Arrays.copyOf(counts, size * 6);
 			}
 			offsets[size] = offset;
-			counts[size++] = ((long) total << 32) | primary;
+			counts[3 * size] = identity;
+			counts[3 * size + 1] = primary;
+			counts[3 * size + 2] = total;
+			size++;
 		}
 
 		void writeTo(ByteSink index, long base) {
 			for (int i = 0; i < size; i++) {
-				index.i64(base + offsets[i]).i32((int) counts[i]).i32((int) (counts[i] >>> 32));
+				index.i64(base + offsets[i]).i32(counts[3 * i]).i32(counts[3 * i + 1]).i32(counts[3 * i + 2]);
 			}
 		}
 

@@ -46,8 +46,8 @@ final class Searcher {
 	/// Only this many of the best preliminary matches are decoded for final scoring.
 	private static final int RESCORE_COUNT = 120;
 
-	/// In the lenient pass, words with more postings than this (or 1% of all places)
-	/// do not generate candidates.
+	/// In the lenient pass, words with more primary postings than this (or 1% of all
+	/// places) do not generate candidates unless every word is that common.
 	private static final int LENIENT_DRIVER_CAP = 20_000;
 
 	/// Do not expand a prefix over more terms than this; use the prefix list instead.
@@ -216,7 +216,7 @@ final class Searcher {
 		}
 		var candidates = new ArrayList<Candidate>();
 		if (tokens.stream().allMatch(Token::hasStrictTerms)) {
-			collect(tokens, filter, 0, candidates);
+			collect(tokens, filter, 0, o.limit(), candidates);
 		}
 		if (candidates.isEmpty()) {
 			// Like Photon, only relax the query when the strict pass found nothing:
@@ -226,7 +226,7 @@ final class Searcher {
 			}
 			int n = tokens.size();
 			int missing = n <= 2 ? 0 : n <= 6 ? 1 : 2;
-			collect(tokens, filter, missing, candidates);
+			collect(tokens, filter, missing, o.limit(), candidates);
 		}
 		return rank(candidates, scoring, o);
 	}
@@ -282,44 +282,151 @@ final class Searcher {
 	/// Collects verified candidates.
 	///
 	/// @param missing how many tokens may be left unmatched; 0 means a strict pass.
-	private void collect(List<Token> tokens, Filter filter, int missing, List<Candidate> out) {
+	private void collect(List<Token> tokens, Filter filter, int missing, int limit, List<Candidate> out) {
 		boolean lenient = missing > 0 || tokens.stream().anyMatch(t -> t.fuzzyIds.length > 0);
-		var entries = new Forward.Entries();
+		var verifier = new Verifier(tokens, filter, missing, out);
 		var docIds = new IntList();
-		var seen = new HashSet<Integer>();
-		Token driver = lenient ? null : cheapest(tokens);
-		// Phases, each checked in importance order until MATCH_TARGET matches:
-		// 0: places with the driving word exactly in a name (only for a prefix driver,
-		//    so a place named exactly "Ott" is not crowded out by important "Ott..." ones),
-		// 1: primary postings, 2: secondary postings.
-		for (int phase = 0; phase < 3; phase++) {
-			boolean secondary = phase == 2;
-			docIds.clear();
-			if (phase == 0) {
-				if (driver == null || !driver.prefix || driver.exactId < 0) {
-					continue;
-				}
-				terms.docs(driver.exactId, false, CANDIDATE_CAP, docIds);
+		// A place is accepted only if some word matches its name or house number (see
+		// identifies), so it is always in the primary postings of some query word.
+		if (lenient) {
+			collectLenient(tokens, verifier, docIds);
+			return;
+		}
+		Token driver = cheapest(tokens);
+		// A: places named exactly as typed, so a place named "Ott" is not crowded out by
+		// more important ones starting with "Ott".
+		if (driver.prefix && driver.exactId >= 0) {
+			terms.docs(driver.exactId, false, CANDIDATE_CAP, docIds);
+			if (verifier.verify(docIds)) {
+				return;
 			}
-			else if (lenient) {
-				// Words such as "de" or "route" match a large share of all places; they
-				// still have to match, but reading their postings would cost more than
-				// checking them on the candidates the rarer words produce.
-				long common = Math.max(LENIENT_DRIVER_CAP, docs.count() / 100);
-				boolean anyRare = tokens.stream().anyMatch(t -> cost(t) <= common || t.fuzzyIds.length > 0);
-				for (Token t : tokens) {
-					if (!anyRare || cost(t) <= common || t.fuzzyIds.length > 0) {
-						readDocs(t, secondary, true, docIds);
-					}
+		}
+		// B: places where the driving word is in the name or house number.
+		docIds.clear();
+		readDocs(driver, false, false, docIds);
+		if (verifier.verify(docIds)) {
+			return;
+		}
+		// C: places where the driving word is only in the address. They need another
+		// word in their name or house number, so intersect with those words' primary
+		// postings before reading any place's terms.
+		if (tokens.size() > 1) {
+			var secondary = new IntList();
+			secondaryDocs(driver, secondary);
+			secondary.sortUniqueTruncate(Integer.MAX_VALUE);
+			var identified = new IntList();
+			for (Token t : tokens) {
+				if (t != driver) {
+					identityDocs(t, identified);
 				}
+			}
+			identified.sortUniqueTruncate(Integer.MAX_VALUE);
+			verifier.verify(intersect(secondary, identified));
+		}
+	}
+
+	/// The lenient pass reads the primary postings of each word, rarest first. Very
+	/// common words such as "rue" or "de" are read only if every word is common;
+	/// otherwise they are just checked on the candidates.
+	private void collectLenient(List<Token> tokens, Verifier verifier, IntList docIds) {
+		var readers = new ArrayList<>(tokens);
+		readers.sort(java.util.Comparator.comparingLong(this::primaryCost));
+		long common = Math.max(LENIENT_DRIVER_CAP, docs.count() / 100);
+		boolean readAny = false;
+		for (Token t : readers) {
+			if (readAny && primaryCost(t) > common) {
+				continue;
+			}
+			docIds.clear();
+			readDocs(t, false, true, docIds);
+			readAny = true;
+			if (verifier.verify(docIds)) {
+				return;
+			}
+		}
+	}
+
+	/// The places whose name or house number has the token.
+	private void identityDocs(Token t, IntList out) {
+		if (t.prefix) {
+			if (t.prefixListId >= 0) {
+				terms.docs(t.prefixListId, false, CANDIDATE_CAP, out);
 			}
 			else {
-				readDocs(java.util.Objects.requireNonNull(driver), secondary, false, docIds);
+				for (int id = t.prefixFrom; id < t.prefixTo; id++) {
+					terms.identityDocs(id, CANDIDATE_CAP, out);
+				}
 			}
+		}
+		else if (t.exactId >= 0) {
+			terms.identityDocs(t.exactId, CANDIDATE_CAP, out);
+		}
+	}
+
+	private void secondaryDocs(Token t, IntList out) {
+		if (t.prefix) {
+			if (t.prefixListId < 0) {
+				for (int id = t.prefixFrom; id < t.prefixTo && out.size() < CANDIDATE_CAP; id++) {
+					terms.secondaryDocs(id, CANDIDATE_CAP, out);
+				}
+			}
+		}
+		else if (t.exactId >= 0) {
+			terms.secondaryDocs(t.exactId, CANDIDATE_CAP, out);
+		}
+	}
+
+	/// The doc IDs in both sorted lists.
+	private static IntList intersect(IntList a, IntList b) {
+		var out = new IntList();
+		int i = 0;
+		int j = 0;
+		while (i < a.size() && j < b.size()) {
+			int x = a.get(i);
+			int y = b.get(j);
+			if (x == y) {
+				out.add(x);
+				i++;
+				j++;
+			}
+			else if (x < y) {
+				i++;
+			}
+			else {
+				j++;
+			}
+		}
+		return out;
+	}
+
+	/// Checks candidate docs against every token and collects the matches.
+	private final class Verifier {
+
+		private final List<Token> tokens;
+
+		private final Filter filter;
+
+		private final int missing;
+
+		private final List<Candidate> out;
+
+		private final Forward.Entries entries = new Forward.Entries();
+
+		private final HashSet<Integer> seen = new HashSet<>();
+
+		Verifier(List<Token> tokens, Filter filter, int missing, List<Candidate> out) {
+			this.tokens = tokens;
+			this.filter = filter;
+			this.missing = missing;
+			this.out = out;
+		}
+
+		/// @return `true` once enough matches are collected.
+		boolean verify(IntList docIds) {
 			docIds.sortUniqueTruncate(CANDIDATE_CAP);
 			for (int i = 0; i < docIds.size() && out.size() < MATCH_TARGET; i++) {
 				int doc = docIds.get(i);
-				if (!filter.passesFixed(doc)) {
+				if (seen.contains(doc) || !filter.passesFixed(doc)) {
 					continue;
 				}
 				forward.read(doc, entries);
@@ -328,14 +435,35 @@ final class Searcher {
 				}
 				boolean address = (docs.flags(doc) & DocCodec.FLAG_HOUSENUMBER) != 0;
 				TokenMatch[] matches = match(tokens, entries, missing, address);
-				if (matches != null && seen.add(doc)) {
+				if (matches != null && identifies(matches) && seen.add(doc)) {
 					out.add(new Candidate(doc, matches));
 				}
 			}
-			if (out.size() >= MATCH_TARGET) {
-				return;
+			return out.size() >= MATCH_TARGET;
+		}
+
+	}
+
+	/// How many primary postings a token would read.
+	private long primaryCost(Token t) {
+		long sum = 0;
+		if (t.prefix) {
+			if (t.prefixListId >= 0) {
+				sum += terms.primaryCount(t.prefixListId);
+			}
+			else {
+				for (int id = t.prefixFrom; id < t.prefixTo; id++) {
+					sum += terms.primaryCount(id);
+				}
 			}
 		}
+		else if (t.exactId >= 0) {
+			sum += terms.primaryCount(t.exactId);
+		}
+		for (int id : t.fuzzyIds) {
+			sum += terms.primaryCount(id);
+		}
+		return sum;
 	}
 
 	/// Picks the token whose postings are shortest to drive the strict pass.
@@ -463,6 +591,18 @@ final class Searcher {
 			matches[ti] = new TokenMatch(t, best, bestField);
 		}
 		return matches;
+	}
+
+	/// Whether the query names the place itself, not only where it is: some word must
+	/// match its name or its house number. Like Photon, a search for `main street`
+	/// returns streets named Main Street, not every house and shop on them.
+	private static boolean identifies(TokenMatch[] matches) {
+		for (TokenMatch m : matches) {
+			if (m != null && (m.field() == Field.NAME.ordinal() || m.field() == Field.HOUSENUMBER.ordinal())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static @Nullable TokenMatch repeatedMatch(List<Token> tokens, TokenMatch[] matches, int index) {

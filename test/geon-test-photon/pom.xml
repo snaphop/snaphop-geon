@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>ai.snaphop.geon</groupId>
+    <artifactId>geon-maven-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+  <artifactId>geon-test-photon</artifactId>
+  <name>geon-test-photon</name>
+  <description>Differential tests: the same data and requests against Photon and Geon</description>
+
+  <properties>
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>ai.snaphop.geon</groupId>
+      <artifactId>geon-test</artifactId>
+      <version>${project.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ai.snaphop.geon</groupId>
+      <artifactId>geon-dump</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ai.snaphop.geon</groupId>
+      <artifactId>geon-index</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ai.snaphop.geon</groupId>
+      <artifactId>geon-photon</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-params</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
