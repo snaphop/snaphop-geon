@@ -64,8 +64,7 @@ generic JSON copy. Not a bug; noted because a copy utility needs
 
 ## Rainbow Gum 0.17.0 in a GraalVM native image
 
-**Symptom:** with `rainbowgum-jdk` (which brings `rainbowgum-jul`), `native-image`
-fails:
+**Symptom:** with `rainbowgum-jdk` on the classpath, `native-image` fails:
 
 ```
 An object of type 'io.jstach.rainbowgum.jul.SystemLoggerQueueJULHandler' was found
@@ -73,18 +72,35 @@ in the image heap ... reached by
   java.util.logging.LogManager$RootLogger ... LogManager.getLogManager()
 ```
 
-GraalVM initializes `java.util.logging.LogManager` at build time. By then the JUL
-bridge has installed its handler on the root logger, so the handler lands in the
-image heap. The first attempt reported the same for `SimpleRainbowGum` through
-`RainbowGumHolder`, which `rainbowgum-jdk` marks `--initialize-at-build-time`.
+and, in an earlier attempt, the same for `io.jstach.rainbowgum.SimpleRainbowGum`
+through `RainbowGumHolder.rainbowGum`.
 
-**Workaround:** `geon-app` depends on `rainbowgum-systemlogger` only. Geon logs
-through `System.Logger`. Netty logs through JUL, which now goes to JUL's default
-console handler instead of Rainbow Gum.
+**Cause** (from `--trace-object-instantiation`). Netty is not involved; the JDK's
+security event logging starts Rainbow Gum while the image is being built:
 
-**To do:** find which build time path triggers the JUL install (likely Netty's
-logger factory probing JUL during class initialization) and fix it in Rainbow Gum,
-or bridge Netty's `InternalLoggerFactory` to `System.Logger`.
+1. GraalVM's `TrustStoreManagerFeature.afterRegistration` loads the default trust
+   store at image build time.
+2. `CertificateFactory.generateCertificate` calls `JCAUtil.tryCommitCertEvent`, which
+   asks `System.getLogger("jdk.event.security").isLoggable(...)`.
+3. That reaches `RainbowGumSystemLoggerFinder.getLogger`. With the default
+   `logging.systemlogger.initialize=CHECK`, `InitRouterProvider.router` calls
+   `RainbowGum.ofOrNull()` and starts a real Rainbow Gum.
+4. Starting it runs `JULConfigurator`, which adds `SystemLoggerQueueJULHandler` to the
+   JUL root logger.
+5. JUL's `LogManager` is a build time object in native images, so the handler and the
+   started gum land in the image heap.
+
+`SystemLoggingFactory`'s javadoc names this exact trigger but assumes only the
+"nothing bound yet" state gets frozen. The `CHECK` path breaks that assumption.
+
+**Proposed fix in Rainbow Gum:** while `org.graalvm.nativeimage.imagecode` is
+`buildtime` (the property `LogAppender` already checks), the finder should return
+`LogRouter.global()` without starting a gum and without marking itself initialized.
+
+**Current state in Geon:** `geon-app` depends on `rainbowgum-systemlogger` without
+`rainbowgum-jdk`. That jar registers no `System.LoggerFinder`, so Geon currently logs
+through the JDK's default `System.Logger` (JUL console), not Rainbow Gum. This is a
+stopgap until the fix above or a Geon side workaround lands.
 
 ## native-maven-plugin 1.1.18
 
