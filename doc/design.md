@@ -231,5 +231,19 @@ arbitrarily.
 * Import from a Nominatim PostgreSQL database. It needs a JDBC driver, which is a new
   dependency.
 * `/nominatim-update` endpoints. They depend on the database import above.
-* `/metrics`. A hand-written Prometheus text exposition is easy to add, so no
-  Micrometer.
+* Incremental updates of an index. The format is immutable; the plan is a small
+  delta index with tombstones in front of it (see [Updates](#updates)).
+* Photon options without an equivalent yet: `-reverse-only`, `-normalization-filters`,
+  `-query-timeout` (accepted and ignored), `-j` (accepted and ignored).
+
+## Photon features covered
+
+* `/api`, `/structured`, `/reverse`, `/status` with Photon's parameters, validation
+  messages and responses, checked against a real Photon by `test/geon-test-photon`.
+* `-synonym-file`: synonyms and classification terms, also checked against Photon.
+* `-metrics-enable prometheus`: `/metrics` with Geon's own metric names
+  (`geon_http_requests_total`, `geon_http_request_seconds`, `geon_index_places`);
+  Photon's Micrometer names are not reproduced.
+* `-cors-any`, `-cors-origin`, `-default-language`, `-max-results`,
+  `-max-reverse-results`, `-languages`, `-extra-tags`, `-full-geometries`,
+  `-country-codes`.
