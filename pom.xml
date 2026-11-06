@@ -32,6 +32,10 @@
     <module>geon</module>
     <module>geon-dump</module>
     <module>geon-index</module>
+    <module>geon-http</module>
+    <module>geon-photon</module>
+    <module>geon-app</module>
+    <module>test/geon-test</module>
   </modules>
 
   <properties>
@@ -63,6 +67,16 @@
       <dependency>
         <groupId>ai.snaphop.geon</groupId>
         <artifactId>geon-index</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ai.snaphop.geon</groupId>
+        <artifactId>geon-http</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ai.snaphop.geon</groupId>
+        <artifactId>geon-photon</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

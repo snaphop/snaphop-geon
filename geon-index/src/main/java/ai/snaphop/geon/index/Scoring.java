@@ -31,7 +31,8 @@ import ai.snaphop.geon.Place;
 /// * Proximity follows Photon's curve: close to 1 within the bias radius, then halving
 ///   every [LocationBias#decayKm()].
 /// * Bonuses: [#TARGET_BONUS] when a structured search's most specific part names
-///   the result's own address level, and [#ADDRESS_BONUS] for addresses when the
+///   the result's own address level, [#HOUSENUMBER_BONUS] when a query word is
+///   exactly the result's house number, and [#ADDRESS_BONUS] for addresses when the
 ///   query asked to suggest addresses.
 final class Scoring {
 
@@ -42,6 +43,8 @@ final class Scoring {
 	static final double TARGET_BONUS = 0.1;
 
 	static final double ADDRESS_BONUS = 0.1;
+
+	static final double HOUSENUMBER_BONUS = 0.1;
 
 	private final Language language;
 
@@ -73,6 +76,12 @@ final class Scoring {
 			}
 		}
 		return best;
+	}
+
+	/// How much a match in a field counts, by field ordinal. For an address (a place
+	/// with a house number) the street identifies the place as much as a name does.
+	static double fieldWeight(int field, boolean address) {
+		return address && field == Field.STREET.ordinal() ? 1.0 : fieldWeight(field);
 	}
 
 	/// How much a match in a field counts, by field ordinal.
@@ -127,6 +136,12 @@ final class Scoring {
 		}
 		if (suggestAddresses && p.houseNumber() != null && p.names().isEmpty()) {
 			bonus += ADDRESS_BONUS;
+		}
+		for (Searcher.TokenMatch m : c.matches) {
+			if (m != null && m.field() == Field.HOUSENUMBER.ordinal() && m.quality() == 1.0) {
+				bonus += HOUSENUMBER_BONUS;
+				break;
+			}
 		}
 		c.score = 0.75 * relevance + 0.25 * standing + bonus;
 		if (explain) {

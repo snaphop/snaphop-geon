@@ -51,7 +51,7 @@ public final class IndexWriter implements AutoCloseable {
 
 	private final List<String> languages;
 
-	private final @Nullable Instant dataTimestamp;
+	private @Nullable Instant dataTimestamp;
 
 	private final boolean geometries;
 
@@ -81,6 +81,13 @@ public final class IndexWriter implements AutoCloseable {
 			throw new IllegalStateException("The index writer for " + file + " is already finished.");
 		}
 		places.add(place);
+	}
+
+	/// Sets when the source data was current, replacing the builder's value. Dump
+	/// readers often learn this only while reading.
+	/// @param dataTimestamp the time or `null`.
+	public void dataTimestamp(@Nullable Instant dataTimestamp) {
+		this.dataTimestamp = dataTimestamp;
 	}
 
 	/// Writes the index file.

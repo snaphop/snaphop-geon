@@ -177,6 +177,10 @@ final class Searcher {
 				continue;
 			}
 			int allowed = part.field | Field.CONTEXT.bit;
+			if (part.type == AddressType.STREET && q.houseNumber() != null) {
+				// Lets the search fall back to the street itself when the house is unknown.
+				allowed |= Field.NAME.bit;
+			}
 			if (target == null) {
 				target = part.type;
 				if (part.type != AddressType.HOUSE) {
@@ -210,21 +214,15 @@ final class Searcher {
 		if (tokens.stream().allMatch(Token::hasStrictTerms)) {
 			collect(tokens, filter, 0, candidates);
 		}
-		if (candidates.size() < o.limit()) {
+		if (candidates.isEmpty()) {
+			// Like Photon, only relax the query when the strict pass found nothing:
+			// otherwise weaker partial matches would pad out good results.
 			for (Token t : tokens) {
 				resolveFuzzy(t);
 			}
 			int n = tokens.size();
 			int missing = n <= 2 ? 0 : n <= 6 ? 1 : 2;
-			var seen = new HashSet<Integer>();
-			candidates.forEach(c -> seen.add(c.doc));
-			var lenient = new ArrayList<Candidate>();
-			collect(tokens, filter, missing, lenient);
-			for (Candidate c : lenient) {
-				if (seen.add(c.doc)) {
-					candidates.add(c);
-				}
-			}
+			collect(tokens, filter, missing, candidates);
 		}
 		return rank(candidates, scoring, o);
 	}
@@ -304,7 +302,8 @@ final class Searcher {
 				if (!filter.passesCategories(entries)) {
 					continue;
 				}
-				TokenMatch[] matches = match(tokens, entries, missing);
+				boolean address = (docs.flags(doc) & DocCodec.FLAG_HOUSENUMBER) != 0;
+				TokenMatch[] matches = match(tokens, entries, missing, address);
 				if (matches != null && seen.add(doc)) {
 					out.add(new Candidate(doc, matches));
 				}
@@ -315,11 +314,16 @@ final class Searcher {
 		}
 	}
 
+	/// Picks the token whose postings are shortest to drive the strict pass.
+	///
+	/// A short prefix only has a capped list of docs where it starts a name, so it can
+	/// drive only when it is the whole query: in `main street sp` the street must be
+	/// found through `main` and then checked for a word starting with `sp` anywhere.
 	private Token cheapest(List<Token> tokens) {
 		Token best = tokens.getFirst();
 		long bestCost = Long.MAX_VALUE;
 		for (Token t : tokens) {
-			long cost = cost(t);
+			long cost = tokens.size() > 1 && t.prefixListId >= 0 ? Long.MAX_VALUE - 1 : cost(t);
 			if (cost < bestCost) {
 				bestCost = cost;
 				best = t;
@@ -373,7 +377,8 @@ final class Searcher {
 	/// Matches every token against a doc's terms. Each doc term satisfies at most one token.
 	/// @return the matches, with `null` entries for unmatched tokens, or `null` if more
 	///   than `missing` tokens are unmatched.
-	private static TokenMatch @Nullable [] match(List<Token> tokens, Forward.Entries e, int missing) {
+	private static TokenMatch @Nullable [] match(List<Token> tokens, Forward.Entries e, int missing,
+			boolean address) {
 		var matches = new TokenMatch[tokens.size()];
 		boolean[] used = new boolean[e.size];
 		int unmatched = 0;
@@ -386,7 +391,7 @@ final class Searcher {
 				int i = e.lowerBound(t.exactId);
 				if (i < e.size && e.termIds[i] == t.exactId && !used[i] && (e.masks[i] & t.allowed) != 0) {
 					int field = Scoring.bestField(e.masks[i] & t.allowed);
-					best = Scoring.fieldWeight(field);
+					best = Scoring.fieldWeight(field, address);
 					bestIndex = i;
 					bestField = field;
 				}
@@ -397,7 +402,7 @@ final class Searcher {
 						continue;
 					}
 					int field = Scoring.bestField(e.masks[i] & t.allowed);
-					double q = Scoring.PREFIX_QUALITY * Scoring.fieldWeight(field);
+					double q = Scoring.PREFIX_QUALITY * Scoring.fieldWeight(field, address);
 					if (q > best) {
 						best = q;
 						bestIndex = i;
@@ -409,7 +414,7 @@ final class Searcher {
 				int i = e.lowerBound(t.fuzzyIds[f]);
 				if (i < e.size && e.termIds[i] == t.fuzzyIds[f] && !used[i] && (e.masks[i] & t.allowed) != 0) {
 					int field = Scoring.bestField(e.masks[i] & t.allowed);
-					double q = Scoring.FUZZY_QUALITY[t.fuzzyDistances[f]] * Scoring.fieldWeight(field);
+					double q = Scoring.FUZZY_QUALITY[t.fuzzyDistances[f]] * Scoring.fieldWeight(field, address);
 					if (q > best) {
 						best = q;
 						bestIndex = i;
