@@ -155,6 +155,12 @@ final class RawPlace {
 	}
 
 	private void readGeometry(JsonReader r, JsonStream json, boolean keep) {
+		if (!keep && bbox != null) {
+			// The geometry would only give the bounding box, and the dump already has it.
+			// Geometries are most of a dump's bytes, so skipping them speeds up imports.
+			r.skipValue();
+			return;
+		}
 		double[] envelope = { Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
 				Double.NEGATIVE_INFINITY };
 		if (keep) {
