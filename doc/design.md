@@ -213,6 +213,19 @@ Against Photon's top result on the same queries, Geon returns the same place for
 of 255 address queries. For name and prefix queries it differs more often, mostly with
 another place of the same name or, by review, a closer match.
 
+Result quality by self retrieval (`tools/geon-quality`, seed 5, 1,200 cases sampled
+from the same dump; a result with the same name, OSM key and city counts as found):
+
+| Query | Photon top 1 | Geon top 1 | Photon MRR | Geon MRR |
+|---|---|---|---|---|
+| `Main Street 12, Springfield` | 97.4% | 99.8% | 0.980 | 0.999 |
+| `Name, City` | 93.0% | 91.5% | 0.961 | 0.952 |
+| first 60% of the name | 22.7% | 19.7% | 0.313 | 0.282 |
+| name with a typo, city | 60.2% | 65.5% | 0.676 | 0.725 |
+
+Prefix queries are often ties between equally named places, which both engines break
+arbitrarily.
+
 ## Deferred
 
 * Import from a Nominatim PostgreSQL database. It needs a JDBC driver, which is a new
