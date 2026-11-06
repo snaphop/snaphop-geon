@@ -17,6 +17,7 @@ import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
 import ai.snaphop.geon.http.HttpServer;
+import ai.snaphop.geon.http.Metrics;
 import ai.snaphop.geon.index.FileIndex;
 import ai.snaphop.geon.index.IndexWriter;
 import ai.snaphop.geon.photon.PhotonApi;
@@ -64,7 +65,11 @@ final class Fixture implements AutoCloseable {
 		var server = PhotonApi.builder(index)
 			.version("test", "test")
 			.build()
-			.routes(HttpServer.builder().port(0).cors(new Cors(false, java.util.List.of("example.com"))))
+			.routes(HttpServer.builder()
+				.port(0)
+				.cors(new Cors(false, java.util.List.of("example.com")))
+				.metrics("/metrics", new Metrics().gauge("geon_index_places", "Places in the index.",
+						() -> index.info().placeCount())))
 			.start();
 		return new Fixture(index, server);
 	}

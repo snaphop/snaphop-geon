@@ -20,6 +20,7 @@ import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
 import ai.snaphop.geon.http.HttpServer;
+import ai.snaphop.geon.http.Metrics;
 import ai.snaphop.geon.index.FileIndex;
 import ai.snaphop.geon.index.IndexWriter;
 import ai.snaphop.geon.photon.PhotonApi;
@@ -78,6 +79,7 @@ public final class Main {
 			  -max-results N       Most results for /api and /structured (default: 50).
 			  -max-reverse-results N  Most results for /reverse (default: 50).
 			  -synonym-file FILE   Synonyms and classification terms in Photon's JSON format.
+			  -metrics-enable prometheus  Serve request and index metrics at /metrics.
 			""";
 
 	private static final Set<String> IGNORED = Set.of("cluster", "transport-addresses", "j", "query-timeout");
@@ -115,7 +117,7 @@ public final class Main {
 						warnings), warnings, out);
 				case "serve" -> serve(Options.parse(rest, Set.of("cors-any"),
 						Set.of("data-dir", "index", "listen-ip", "listen-port", "cors-origin", "default-language",
-								"max-results", "max-reverse-results", "synonym-file"),
+								"max-results", "max-reverse-results", "synonym-file", "metrics-enable"),
 						IGNORED, warnings), warnings, out);
 				case "version" -> out.println("geon " + version());
 				default -> throw new Options.UsageException(
@@ -248,12 +250,20 @@ public final class Main {
 			.maxReverseResults(o.integer("max-reverse-results", 50))
 			.version(version(), System.getProperty("geon.gitCommit", "unknown"))
 			.build();
-		var server = api
-			.routes(HttpServer.builder()
-				.host(o.value("listen-ip", "127.0.0.1"))
-				.port(o.integer("listen-port", 2322))
-				.cors(cors))
-			.start();
+		var http = HttpServer.builder()
+			.host(o.value("listen-ip", "127.0.0.1"))
+			.port(o.integer("listen-port", 2322))
+			.cors(cors);
+		String metrics = o.valueOrNull("metrics-enable");
+		if (metrics != null) {
+			if (!metrics.equals("prometheus")) {
+				throw new Options.UsageException(
+						"Unsupported -metrics-enable value '" + metrics + "'. The only supported value is prometheus.");
+			}
+			long places = index.info().placeCount();
+			http.metrics("/metrics", new Metrics().gauge("geon_index_places", "Places in the index.", () -> places));
+		}
+		var server = api.routes(http).start();
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 			server.close();
 			index.close();

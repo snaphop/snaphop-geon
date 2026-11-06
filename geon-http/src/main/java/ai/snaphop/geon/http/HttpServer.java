@@ -123,6 +123,10 @@ public final class HttpServer implements AutoCloseable {
 
 		private int maxRequestBytes = 64 * 1024;
 
+		private Metrics metrics = new Metrics();
+
+		private boolean metricsEnabled;
+
 		private Builder() {
 		}
 
@@ -175,13 +179,26 @@ public final class HttpServer implements AutoCloseable {
 			return this;
 		}
 
+		/// Records request metrics and serves them at a path in the Prometheus text format.
+		/// Off by default.
+		/// @param path the metrics path, for example `/metrics`.
+		/// @param metrics the metrics, which may carry gauges.
+		/// @return this.
+		public Builder metrics(String path, Metrics metrics) {
+			this.metrics = metrics;
+			this.metricsEnabled = true;
+			return route(path, req -> HttpResponse.text(200, "text/plain; version=0.0.4; charset=utf-8",
+					metrics.prometheus()));
+		}
+
 		/// Binds the port and starts serving.
 		/// @return the running server.
 		/// @throws InterruptedException if interrupted while binding.
 		public HttpServer start() throws InterruptedException {
 			var group = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
 			var executor = Executors.newVirtualThreadPerTaskExecutor();
-			var dispatcher = new Dispatcher(Map.copyOf(routes), notFound, errorHandler, cors, executor);
+			var dispatcher = new Dispatcher(Map.copyOf(routes), notFound, errorHandler, cors, executor,
+					metricsEnabled ? metrics : null);
 			try {
 				Channel channel = new ServerBootstrap().group(group)
 					.channel(NioServerSocketChannel.class)
@@ -213,10 +230,21 @@ public final class HttpServer implements AutoCloseable {
 	}
 
 	private record Dispatcher(Map<String, HttpHandler> routes, HttpHandler notFound, ErrorHandler errorHandler,
-			Cors cors, ExecutorService executor) {
+			Cors cors, ExecutorService executor, @Nullable Metrics metrics) {
 
 		HttpResponse dispatch(HttpRequest request) {
+			long start = System.nanoTime();
 			HttpHandler handler = request.method().equals("GET") ? routes.get(request.path()) : null;
+			HttpResponse response = handle(handler, request);
+			if (metrics != null) {
+				// Unknown paths share one label so scanners cannot grow the metrics.
+				metrics.record(handler == null ? "other" : request.path(), response.status(),
+						System.nanoTime() - start);
+			}
+			return response;
+		}
+
+		private HttpResponse handle(@Nullable HttpHandler handler, HttpRequest request) {
 			try {
 				return (handler == null ? notFound : handler).handle(request);
 			}
