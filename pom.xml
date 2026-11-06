@@ -103,7 +103,7 @@
       </dependency>
       <dependency>
         <groupId>io.jstach.rainbowgum</groupId>
-        <artifactId>rainbowgum-systemlogger</artifactId>
+        <artifactId>rainbowgum-jdk</artifactId>
         <version>${rainbowgum.version}</version>
       </dependency>
       <dependency>

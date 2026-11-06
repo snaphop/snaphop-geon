@@ -20,6 +20,7 @@ import ai.snaphop.geon.http.HttpServer;
 import ai.snaphop.geon.index.FileIndex;
 import ai.snaphop.geon.index.IndexWriter;
 import ai.snaphop.geon.photon.PhotonApi;
+import io.jstach.rainbowgum.RainbowGum;
 
 /// The `geon` command.
 ///
@@ -78,6 +79,9 @@ public final class Main {
 	/// and 2 on any other failure.
 	/// @param args the arguments.
 	public static void main(String[] args) {
+		// Start logging explicitly: the native image is built with
+		// logging.systemlogger.initialize=false (see doc/dependency-issues.md).
+		RainbowGum.of();
 		int status = run(List.of(args), System.out, System.err);
 		if (status != 0) {
 			System.exit(status);

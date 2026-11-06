@@ -97,10 +97,20 @@ security event logging starts Rainbow Gum while the image is being built:
 `buildtime` (the property `LogAppender` already checks), the finder should return
 `LogRouter.global()` without starting a gum and without marking itself initialized.
 
-**Current state in Geon:** `geon-app` depends on `rainbowgum-systemlogger` without
-`rainbowgum-jdk`. That jar registers no `System.LoggerFinder`, so Geon currently logs
-through the JDK's default `System.Logger` (JUL console), not Rainbow Gum. This is a
-stopgap until the fix above or a Geon side workaround lands.
+**Workaround in Geon** (until a Rainbow Gum release has the fix):
+
+* `geon-app` depends on `rainbowgum-jdk` again, so Geon and Netty (through the JUL
+  bridge) log through Rainbow Gum.
+* The native build passes `-Dlogging.systemlogger.initialize=false`, so the finder
+  never starts a gum while the image is built. The decision is frozen into the image,
+  so the finder does not start one at run time either.
+* `Main.main` therefore starts Rainbow Gum itself with `RainbowGum.of()` before
+  anything logs. On the JVM this is harmless: the finder reuses that gum.
+
+**Fix:** `jstachio/rainbowgum` branch `fix/systemlogger-native-buildtime` makes the
+finder return the queuing global router while `org.graalvm.nativeimage.imagecode` is
+`buildtime`, without starting a gum or caching that answer. Verified by building
+Geon's native image against it with `rainbowgum-jdk` and no SLF4J.
 
 ## native-maven-plugin 1.1.18
 
