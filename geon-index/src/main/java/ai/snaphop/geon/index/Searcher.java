@@ -375,7 +375,7 @@ final class Searcher {
 		}
 		// B: places where the driving word is in the name or house number.
 		docIds.clear();
-		readDocs(driver, false, false, docIds);
+		primaryDocs(driver, false, docIds);
 		if (verifier.verify(docIds)) {
 			return;
 		}
@@ -417,7 +417,7 @@ final class Searcher {
 				continue;
 			}
 			docIds.clear();
-			readDocs(t, false, true, docIds);
+			primaryDocs(t, true, docIds);
 			readAny = true;
 			if (verifier.verify(docIds)) {
 				return;
@@ -623,33 +623,31 @@ final class Searcher {
 		return any ? sum : Long.MAX_VALUE;
 	}
 
-	private void readDocs(Token t, boolean secondary, boolean withFuzzy, IntList out) {
-		if (secondary && t.prefixListId >= 0 && t.prefix) {
-			// Short prefixes only have a capped primary list.
-			return;
-		}
+	/// Adds the primary postings of a token: its exact term, prefix range or capped
+	/// prefix list, its synonyms and, with `withFuzzy`, its typo matches.
+	private void primaryDocs(Token t, boolean withFuzzy, IntList out) {
 		if (t.prefix) {
 			if (t.prefixListId >= 0) {
 				terms.docs(t.prefixListId, false, CANDIDATE_CAP, out);
 			}
 			else {
 				for (int id = t.prefixFrom; id < t.prefixTo && out.size() < CANDIDATE_CAP; id++) {
-					terms.docs(id, secondary, CANDIDATE_CAP, out);
+					terms.docs(id, false, CANDIDATE_CAP, out);
 				}
 			}
 		}
 		else if (t.exactId >= 0) {
-			terms.docs(t.exactId, secondary, CANDIDATE_CAP, out);
+			terms.docs(t.exactId, false, CANDIDATE_CAP, out);
 		}
 		for (int id : t.synonymIds) {
-			terms.docs(id, secondary, CANDIDATE_CAP, out);
+			terms.docs(id, false, CANDIDATE_CAP, out);
 		}
 		if (withFuzzy) {
 			for (int id : t.fuzzyIds) {
 				if (out.size() >= CANDIDATE_CAP) {
 					break;
 				}
-				terms.docs(id, secondary, CANDIDATE_CAP, out);
+				terms.docs(id, false, CANDIDATE_CAP, out);
 			}
 		}
 	}
