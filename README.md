@@ -52,6 +52,7 @@ rest spills to temporary files. Serve with either; the native image starts in ab
 | `geon-app` | The `geon` command line |
 | `test/geon-test` | End to end tests |
 | `test/geon-test-photon` | Differential tests against a real Photon (`-Pphoton`) |
+| `tools/geon-quality` | Result quality report: how often places sampled from a dump are found |
 
 ## License
 

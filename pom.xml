@@ -36,6 +36,7 @@
     <module>geon-photon</module>
     <module>geon-app</module>
     <module>test/geon-test</module>
+    <module>tools/geon-quality</module>
   </modules>
 
   <profiles>
