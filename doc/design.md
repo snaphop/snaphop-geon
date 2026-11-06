@@ -1,6 +1,8 @@
 # Geon Design
 
-Status: **draft for review**. Nothing in the index section is implemented yet.
+Status: the index, the dump import, the Photon compatible API and the CLI are
+implemented. Sections below say where the implementation differs from the first plan.
+[Measurements](#measurements) has the current numbers against Photon.
 
 Geon is a geocoder for OpenStreetMap data. It serves a Photon compatible HTTP API
 and is built as a GraalVM native image.
@@ -111,34 +113,36 @@ Geon will use a differential harness instead:
 
 ### File layout
 
-There is one file, made of sections:
+One file of sections; `geon-index/.../Layout.java` documents the exact bytes.
 
-1. **Header:** format version, import date, languages, feature flags.
-2. **String pool:** every distinct display string stored once. Address strings are
-   hugely repetitive. For example, every Andorra place carries about 40 translations
-   of "Andorra la Vella". Interning them should be the single biggest size reduction.
-3. **Address nodes:** each unique address component (city, state and so on, with all
-   its localized names) is stored once. A place refers to its address parts by node
-   ID, in the same spirit as the dump format's `addresslines`.
-4. **Doc table:** fixed width records with variable length overflow:
-   * osm type, osm id, osm key and value (dictionary encoded)
-   * address type, importance, centroid, bbox
-   * name refs, address node refs, house number, postcode, country code
-   * categories, extra tags
-5. **Term dictionary:** normalized tokens, sorted and front coded in blocks, with a
-   block index. Supports:
-   * exact lookup
-   * prefix ranges (search as you type)
-   * fuzzy lookup, by running a Levenshtein automaton over the sorted terms
-   We may move to an FST later if size requires it.
-6. **Postings:** for each term, the doc IDs (delta and varint encoded) and a one-byte
-   field mask per doc. The mask records where the term occurs: name, street, locality,
-   city, county, state, country, house number, postcode or category. One index replaces
-   Photon's many collector fields.
-7. **Geo index:** a packed Hilbert R-tree over centroids and bboxes, in flatbush
-   style. It handles reverse k-nearest search and bbox filters.
-8. **Geometries (optional):** compact encoded geometry, only when the import
-   enables geometry support.
+1. **Header:** format version, then the offset and length of every section.
+2. **Strings:** display strings stored once, referenced by offset. Numeric place
+   IDs are stored as numbers instead.
+3. **Address sets:** the address parts, context names, postcode and country code a
+   place has, stored once and shared. Every house of a street in one town shares one
+   set, so most places carry just a reference. This replaced the planned per part
+   address nodes: sharing the whole set is simpler and saves more.
+4. **Doc table:** a fixed 28 byte record per place (coordinates, importance, tag,
+   country, address type, flags and one offset), plus a variable record with the
+   place's own terms and fields.
+5. **Term dictionary:** sorted, front coded blocks with a block index.
+6. **Postings:** per term, delta encoded doc IDs, split into primary (the term is in
+   the place's name, house number or, for addresses, street) and secondary.
+7. **Term lists:** each place has a list of its own terms with a field mask, and each
+   address set has one for its terms. A query merges the two to check candidates.
+8. **Geo index:** a packed Hilbert R-tree; leaves are doc IDs whose coordinates come
+   from the doc table.
+
+### Import
+
+`geon import` streams the dump: each place is encoded to a temporary spill file as
+it is read. After sorting by importance, postings are collected in memory up to the
+budget (`-import-memory`, or `GEON_IMPORT_MEMORY`; default a quarter of the heap),
+written as sorted runs and merged. Memory then grows with the number of distinct
+terms, strings and address sets, not with the number of places.
+
+Run imports on HotSpot: the native image's serial garbage collector makes a
+Switzerland import 5 times slower.
 
 ### Text normalization
 
@@ -188,14 +192,26 @@ There is one file, made of sections:
   the immutable base, merged periodically. The `GeonIndex` interface does not assume
   that the index is immutable.
 
-### Memory and scale targets (to verify)
+### Measurements
 
-* The index file should be well under Photon's 95 GB for the planet. The interning and
-  single index design should bring it to roughly a quarter of that, but this is a
-  guess until we measure it on real extracts.
-* The heap should be small (hundreds of MB) whatever the dataset size.
-* Import uses bounded memory: sorted runs on disk plus a k-way merge, so planet scale
-  does not need planet sized RAM.
+Switzerland and Liechtenstein, GraphHopper's 2026-10-31 dump, 3,145,827 places, on a
+20 core machine. Query latency is over 500 sequential `/api` requests built from the
+dump: names, typed prefixes and addresses.
+
+| | Photon 1.3.0 | Geon (HotSpot) | Geon (native) |
+|---|---|---|---|
+| Import time | 140 s | 32 s | 155 s |
+| Import peak memory | 9.5 GB | 3.0 GB (1 GB budget) | 2.0 GB |
+| Index on disk | 1.3 GB | 438 MB | 438 MB |
+| Serving memory (RSS) | 1.8 GB | 1.8 GB (default heap) | 0.44 GB |
+| Startup | about 3 s | about 100 ms | 28 ms |
+| `/api` median | 3.6 ms | 0.9 ms | 1.0 ms |
+| `/api` p95 | 6.6 ms | 2.5 ms | 4.1 ms |
+| `/api` p99 | 8.8 ms | 7 to 9 ms | 17 ms |
+
+Against Photon's top result on the same queries, Geon returns the same place for 245
+of 255 address queries. For name and prefix queries it differs more often, mostly with
+another place of the same name or, by review, a closer match.
 
 ## Deferred
 
