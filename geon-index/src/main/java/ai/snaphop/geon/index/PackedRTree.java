@@ -19,9 +19,11 @@ import ai.snaphop.geon.GeoPoint;
 /// int    item count n
 /// int    level count
 /// int[]  level end positions (in nodes), one per level, leaves first
-/// int[]  boxes, 4 per node: min lon, min lat, max lon, max lat
+/// int[]  boxes of the internal nodes only, 4 per node: min lon, min lat, max lon, max lat
 /// int[]  per node: the doc ID for a leaf, or the first child's node position
 /// ```
+///
+/// Leaves store no box: a leaf is a point, read from the doc's own record.
 final class PackedRTree {
 
 	static final int NODE_SIZE = 16;
@@ -32,11 +34,12 @@ final class PackedRTree {
 	/// Builds the tree section for the given points.
 	/// @param lonE7 longitudes in 1e-7 degrees, indexed by doc ID.
 	/// @param latE7 latitudes in 1e-7 degrees, indexed by doc ID.
-	static ByteSink build(int[] lonE7, int[] latE7) {
+	/// @param out where to write the section.
+	static void build(int[] lonE7, int[] latE7, ByteSink out) {
 		int n = lonE7.length;
-		var sink = new ByteSink(64 + n * 24);
 		if (n == 0) {
-			return sink.i32(0).i32(0);
+			out.i32(0).i32(0);
+			return;
 		}
 		long[] keyed = new long[n];
 		for (int i = 0; i < n; i++) {
@@ -57,48 +60,55 @@ final class PackedRTree {
 			total += count;
 			levelEnds[levels++] = total;
 		}
-		int[] boxes = new int[total * 4];
 		int[] refs = new int[total];
 		for (int i = 0; i < n; i++) {
-			int doc = (int) keyed[i];
-			boxes[i * 4] = lonE7[doc];
-			boxes[i * 4 + 1] = latE7[doc];
-			boxes[i * 4 + 2] = lonE7[doc];
-			boxes[i * 4 + 3] = latE7[doc];
-			refs[i] = doc;
+			refs[i] = (int) keyed[i];
 		}
+		keyed = null;
+		// Boxes of the internal nodes only; node k is at (k - n) * 4.
+		int[] boxes = new int[(total - n) * 4];
 		int pos = 0;
-		int out = n;
+		int node = n;
 		for (int level = 0; level < levels - 1; level++) {
 			int end = levelEnds[level];
 			while (pos < end) {
 				int first = pos;
 				int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
 				for (int j = 0; j < NODE_SIZE && pos < end; j++, pos++) {
-					minX = Math.min(minX, boxes[pos * 4]);
-					minY = Math.min(minY, boxes[pos * 4 + 1]);
-					maxX = Math.max(maxX, boxes[pos * 4 + 2]);
-					maxY = Math.max(maxY, boxes[pos * 4 + 3]);
+					if (pos < n) {
+						int doc = refs[pos];
+						minX = Math.min(minX, lonE7[doc]);
+						minY = Math.min(minY, latE7[doc]);
+						maxX = Math.max(maxX, lonE7[doc]);
+						maxY = Math.max(maxY, latE7[doc]);
+					}
+					else {
+						int b = (pos - n) * 4;
+						minX = Math.min(minX, boxes[b]);
+						minY = Math.min(minY, boxes[b + 1]);
+						maxX = Math.max(maxX, boxes[b + 2]);
+						maxY = Math.max(maxY, boxes[b + 3]);
+					}
 				}
-				boxes[out * 4] = minX;
-				boxes[out * 4 + 1] = minY;
-				boxes[out * 4 + 2] = maxX;
-				boxes[out * 4 + 3] = maxY;
-				refs[out] = first;
-				out++;
+				int b = (node - n) * 4;
+				boxes[b] = minX;
+				boxes[b + 1] = minY;
+				boxes[b + 2] = maxX;
+				boxes[b + 3] = maxY;
+				refs[node] = first;
+				node++;
 			}
 		}
-		sink.i32(n).i32(levels);
+		out.i32(n).i32(levels);
 		for (int i = 0; i < levels; i++) {
-			sink.i32(levelEnds[i]);
+			out.i32(levelEnds[i]);
 		}
-		for (int b : boxes) {
-			sink.i32(b);
+		for (int v : boxes) {
+			out.i32(v);
 		}
 		for (int r : refs) {
-			sink.i32(r);
+			out.i32(r);
 		}
-		return sink;
 	}
 
 	/// Position on a Hilbert curve of order 16, after the public domain
@@ -145,6 +155,8 @@ final class PackedRTree {
 
 		private final MemorySegment s;
 
+		private final DocCodec.Reader docs;
+
 		private final int n;
 
 		private final int[] levelEnds;
@@ -153,8 +165,9 @@ final class PackedRTree {
 
 		private final long refsOffset;
 
-		Reader(MemorySegment s) {
+		Reader(MemorySegment s, DocCodec.Reader docs) {
 			this.s = s;
+			this.docs = docs;
 			this.n = Seg.i32(s, 0);
 			int levels = Seg.i32(s, 4);
 			this.levelEnds = new int[levels];
@@ -163,11 +176,15 @@ final class PackedRTree {
 			}
 			int total = levels == 0 ? 0 : levelEnds[levels - 1];
 			this.boxesOffset = 8 + 4L * levels;
-			this.refsOffset = boxesOffset + 16L * total;
+			this.refsOffset = boxesOffset + 16L * Math.max(0, total - n);
 		}
 
 		private int box(int node, int k) {
-			return Seg.i32(s, boxesOffset + 16L * node + 4L * k);
+			if (node < n) {
+				int doc = ref(node);
+				return (k & 1) == 0 ? docs.lonE7(doc) : docs.latE7(doc);
+			}
+			return Seg.i32(s, boxesOffset + 16L * (node - n) + 4L * k);
 		}
 
 		private int ref(int node) {

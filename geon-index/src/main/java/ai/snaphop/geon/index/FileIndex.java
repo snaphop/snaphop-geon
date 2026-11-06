@@ -106,14 +106,15 @@ public final class FileIndex implements GeonIndex {
 					string(strings, Seg.i64(tagSection, 16L * i + 8)) };
 		}
 		var docs = new DocCodec.Reader(strings, sections[Layout.Section.DOCS.ordinal()],
-				sections[Layout.Section.DOCVAR.ordinal()], keys, tags);
+				sections[Layout.Section.DOCVAR.ordinal()], sections[Layout.Section.ADDRESS_INDEX.ordinal()],
+				sections[Layout.Section.ADDRESS.ordinal()], keys, tags);
 		var terms = new Terms(sections[Layout.Section.TERMS.ordinal()],
 				sections[Layout.Section.TERM_BLOCKS.ordinal()], sections[Layout.Section.POSTING_INDEX.ordinal()],
 				sections[Layout.Section.POSTINGS.ordinal()], termCount);
-		var tree = new PackedRTree.Reader(sections[Layout.Section.RTREE.ordinal()]);
+		var tree = new PackedRTree.Reader(sections[Layout.Section.RTREE.ordinal()], docs);
 		var info = new IndexInfo(timestamp == Long.MIN_VALUE ? null : Instant.ofEpochMilli(timestamp), languages,
 				geometries, placeCount);
-		var searcher = new Searcher(docs, terms, new Forward(sections[Layout.Section.FORWARD.ordinal()], docs), tree);
+		var searcher = new Searcher(docs, terms, new Forward(docs), tree);
 		return new FileIndex(file, arena, info, searcher);
 	}
 

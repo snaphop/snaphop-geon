@@ -13,6 +13,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
+import org.jspecify.annotations.Nullable;
+
 import ai.snaphop.geon.dump.DumpReader;
 import ai.snaphop.geon.dump.ExtraTags;
 import ai.snaphop.geon.http.Cors;
@@ -59,6 +61,11 @@ public final class Main {
 			  -extra-tags TAGS     ALL, or a comma separated list of extra tags to keep.
 			  -full-geometries     Keep full geometries for 'geometry=1' responses.
 			  -country-codes CC,.. Only import these countries.
+			  -import-memory SIZE  Memory for collecting postings before writing them to disk,
+			                       for example 512m or 4g. Default: a quarter of the heap.
+			                       Environment variable: GEON_IMPORT_MEMORY.
+			  -tmp-dir DIR         Directory for temporary import files (default: the index
+			                       directory). They can be larger than the finished index.
 
 			Serve options:
 			  -listen-ip IP        Address to listen on (default: 127.0.0.1).
@@ -99,7 +106,9 @@ public final class Main {
 		try {
 			switch (args.getFirst()) {
 				case "import" -> runImport(Options.parse(rest, Set.of("full-geometries"),
-						Set.of("data-dir", "index", "import-file", "languages", "extra-tags", "country-codes"), IGNORED,
+						Set.of("data-dir", "index", "import-file", "languages", "extra-tags", "country-codes",
+								"import-memory", "tmp-dir"),
+						IGNORED,
 						warnings), warnings, out);
 				case "serve" -> serve(Options.parse(rest, Set.of("cors-any"),
 						Set.of("data-dir", "index", "listen-ip", "listen-port", "cors-origin", "default-language",
@@ -147,13 +156,50 @@ public final class Main {
 		Path index = indexFile(o);
 		long start = System.nanoTime();
 		try (InputStream in = open(source)) {
-			try (var writer = IndexWriter.builder(index).languages(languages).geometries(o.has("full-geometries")).build()) {
+			var builder = IndexWriter.builder(index)
+				.languages(languages)
+				.geometries(o.has("full-geometries"))
+				.memoryBudget(memory(o.valueOrNull("import-memory"), System.getenv("GEON_IMPORT_MEMORY")));
+			String tmp = o.valueOrNull("tmp-dir");
+			if (tmp != null) {
+				builder.tempDirectory(Path.of(tmp));
+			}
+			try (var writer = builder.build()) {
 				var summary = reader.read(in, writer::add);
 				writer.dataTimestamp(summary.dataTimestamp());
 				var info = writer.finish();
 				out.printf("Imported %,d places (%,d skipped) into %s (%,d bytes) in %.1f s.%n", info.placeCount(),
 						summary.skippedCount(), index, Files.size(index), (System.nanoTime() - start) / 1e9);
 			}
+		}
+	}
+
+	/// Parses a size such as `512m` or `4g` from the option, else the environment variable.
+	/// @return bytes, or 0 for the default.
+	static long memory(@Nullable String option, @Nullable String env) throws Options.UsageException {
+		String value = option != null ? option : env;
+		if (value == null || value.isBlank()) {
+			return 0;
+		}
+		String v = value.strip().toLowerCase(java.util.Locale.ROOT);
+		long unit = switch (v.charAt(v.length() - 1)) {
+			case 'k' -> 1L << 10;
+			case 'm' -> 1L << 20;
+			case 'g' -> 1L << 30;
+			default -> 1;
+		};
+		String digits = unit == 1 ? v : v.substring(0, v.length() - 1);
+		try {
+			long n = Long.parseLong(digits);
+			if (n <= 0) {
+				throw new NumberFormatException();
+			}
+			return n * unit;
+		}
+		catch (NumberFormatException e) {
+			throw new Options.UsageException("Invalid memory size '" + value + "'"
+					+ (option != null ? " for -import-memory" : " in GEON_IMPORT_MEMORY")
+					+ ". Use a number of bytes with an optional k, m or g suffix, for example 512m.");
 		}
 	}
 

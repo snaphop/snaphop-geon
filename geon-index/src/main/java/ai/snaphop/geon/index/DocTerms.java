@@ -3,18 +3,29 @@ package ai.snaphop.geon.index;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
+import org.jspecify.annotations.Nullable;
+
+import ai.snaphop.geon.AddressType;
 import ai.snaphop.geon.Place;
 
 /// Extracts the terms of a place and the fields each occurs in.
+///
+/// Terms come in two groups that are stored separately:
+///
+/// * a place's own terms ([#own(Place)]): names, house number and categories;
+/// * its address terms ([#address(Map, Set, String, String)]): address parts, context
+///   names, postcode and country code, which are shared by every place with the same
+///   address and stored once per address set.
 final class DocTerms {
 
 	private DocTerms() {
 	}
 
-	/// The terms of a place.
+	/// The place's own terms.
 	/// @return term to [Field] mask.
-	static Map<String, Integer> of(Place p) {
+	static Map<String, Integer> own(Place p) {
 		var terms = new HashMap<String, Integer>();
 		p.names().values().forEach(n -> add(terms, n, Field.NAME));
 		String hnr = p.houseNumber();
@@ -22,20 +33,6 @@ final class DocTerms {
 			add(terms, hnr, Field.HOUSENUMBER);
 			addJoined(terms, hnr, Field.HOUSENUMBER);
 		}
-		p.address().forEach((type, names) -> {
-			Field f = Field.of(type);
-			names.values().forEach(n -> add(terms, n, f));
-		});
-		String postcode = p.postcode();
-		if (postcode != null) {
-			add(terms, postcode, Field.POSTCODE);
-			addJoined(terms, postcode, Field.POSTCODE);
-		}
-		String cc = p.countryCode();
-		if (cc != null) {
-			terms.merge(cc.toLowerCase(Locale.ROOT), Field.COUNTRYCODE.bit, (a, b) -> a | b);
-		}
-		p.context().forEach(c -> add(terms, c, Field.CONTEXT));
 		for (String category : p.categories()) {
 			// Index every level with at least two labels: osm.amenity, osm.amenity.cafe.
 			int dot = category.indexOf('.');
@@ -45,6 +42,26 @@ final class DocTerms {
 				terms.merge(Field.CATEGORY_PREFIX + level, Field.CATEGORY.bit, (a, b) -> a | b);
 				dot = next;
 			}
+		}
+		return terms;
+	}
+
+	/// The terms of an address set.
+	/// @return term to [Field] mask.
+	static Map<String, Integer> address(Map<AddressType, Map<String, String>> parts, Set<String> context,
+			@Nullable String postcode, @Nullable String countryCode) {
+		var terms = new HashMap<String, Integer>();
+		parts.forEach((type, names) -> {
+			Field f = Field.of(type);
+			names.values().forEach(n -> add(terms, n, f));
+		});
+		context.forEach(c -> add(terms, c, Field.CONTEXT));
+		if (postcode != null) {
+			add(terms, postcode, Field.POSTCODE);
+			addJoined(terms, postcode, Field.POSTCODE);
+		}
+		if (countryCode != null) {
+			terms.merge(countryCode.toLowerCase(Locale.ROOT), Field.COUNTRYCODE.bit, (a, b) -> a | b);
 		}
 		return terms;
 	}

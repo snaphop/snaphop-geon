@@ -37,11 +37,19 @@ final class Fixture implements AutoCloseable {
 
 	/// Imports `/fixtures/{name}.jsonl` with all extra tags and starts the Photon API.
 	static Fixture start(String name, Path dir) throws Exception {
+		return start(name, dir, 0);
+	}
+
+	/// Like [#start(String, Path)] with an import memory budget in bytes; 0 for the default.
+	static Fixture start(String name, Path dir, long memoryBudget) throws Exception {
 		Path file = dir.resolve(name + ".geon");
 		var reader = DumpReader.builder().extraTags(ExtraTags.ALL).build();
 		try (InputStream in = Objects.requireNonNull(Fixture.class.getResourceAsStream("/fixtures/" + name + ".jsonl"),
 				name);
-				var writer = IndexWriter.builder(file).languages(DumpReader.DEFAULT_LANGUAGES).build()) {
+				var writer = IndexWriter.builder(file)
+					.languages(DumpReader.DEFAULT_LANGUAGES)
+					.memoryBudget(memoryBudget)
+					.build()) {
 			var summary = reader.read(in, writer::add);
 			writer.dataTimestamp(summary.dataTimestamp());
 			writer.finish();

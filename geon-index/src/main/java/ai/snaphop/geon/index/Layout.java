@@ -18,16 +18,22 @@ import java.nio.charset.StandardCharsets;
 /// * `TAGS`: the distinct OSM key and value pairs, two string offsets (longs) each.
 /// * `DOCS`: one fixed [#DOC_RECORD] byte record per place, in doc ID order. Doc IDs
 ///   are assigned by descending importance.
-/// * `DOCVAR`: the variable part of each place, see [DocCodec].
+/// * `DOCVAR`: the variable part of each place: its own terms, then its address set,
+///   then its fields; see [DocCodec].
+/// * `ADDRESS_INDEX`: the offset (long) of each address set in `ADDRESS`.
+/// * `ADDRESS`: address sets: the address parts and context names that many places
+///   share, with their terms; see [DocCodec].
 /// * `TERMS`: the sorted term dictionary in front coded blocks of [#TERM_BLOCK] terms.
 /// * `TERM_BLOCKS`: the offset (long) of each block in `TERMS`.
 /// * `POSTING_INDEX`: per term ID, a [#POSTING_ENTRY] byte entry: offset (long) into
 ///   `POSTINGS`, primary count (int), total count (int).
 /// * `POSTINGS`: per term, delta encoded varint doc IDs: the primary docs first, then
 ///   the secondary docs, each list ascending.
-/// * `FORWARD`: per doc, a varint count then (term ID delta, field mask) varint pairs
-///   in ascending term ID order.
 /// * `RTREE`: a packed Hilbert R-tree over place centroids, see [PackedRTree].
+///
+/// A term list ("forward" entries) is a varint count, then (term ID delta, field mask)
+/// varint pairs in ascending term ID order. Each place has one for its own terms and
+/// shares the one of its address set.
 final class Layout {
 
 	private Layout() {
@@ -35,7 +41,7 @@ final class Layout {
 
 	static final byte[] MAGIC = "GEONIDX1".getBytes(StandardCharsets.US_ASCII);
 
-	static final int VERSION = 1;
+	static final int VERSION = 3;
 
 	static final int HEADER_FIXED = 16;
 
@@ -49,13 +55,11 @@ final class Layout {
 	///  8 float  importance
 	/// 12 int    tag ID (index into TAGS)
 	/// 16 long   offset into DOCVAR
-	/// 24 long   offset into FORWARD
-	/// 32 short  country code, two ASCII letters, 0 if none
-	/// 34 byte   address type ordinal
-	/// 35 byte   flags, see DocCodec
-	/// 36 int    reserved, 0
+	/// 24 short  country code, two ASCII letters, 0 if none
+	/// 26 byte   address type ordinal
+	/// 27 byte   flags, see DocCodec
 	/// ```
-	static final int DOC_RECORD = 40;
+	static final int DOC_RECORD = 28;
 
 	static final int TERM_BLOCK = 32;
 
@@ -65,7 +69,7 @@ final class Layout {
 	static final double COORD_SCALE = 1e7;
 
 	enum Section {
-		META, STRINGS, TAGS, DOCS, DOCVAR, TERMS, TERM_BLOCKS, POSTING_INDEX, POSTINGS, FORWARD, RTREE
+		META, STRINGS, TAGS, DOCS, DOCVAR, ADDRESS_INDEX, ADDRESS, TERMS, TERM_BLOCKS, POSTING_INDEX, POSTINGS, RTREE
 	}
 
 	static int toE7(double degrees) {
