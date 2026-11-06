@@ -105,6 +105,9 @@ final class Searcher {
 
 		final int allowed;
 
+		/// Which comma separated part of the query the token is in, 0 for the first.
+		int segment;
+
 		int exactId = -1;
 
 		int prefixFrom;
@@ -176,9 +179,20 @@ final class Searcher {
 		}
 		boolean lastIsPrefix = !text.endsWith(" ");
 		var tokens = new ArrayList<Token>();
-		var raw = Text.tokens(text, false);
-		for (int i = 0; i < raw.size(); i++) {
-			tokens.add(new Token(raw.get(i), lastIsPrefix && i == raw.size() - 1, Field.TEXT_MASK));
+		String[] segments = text.split(",");
+		for (int seg = 0; seg < segments.length; seg++) {
+			for (String word : Text.tokens(segments[seg], false)) {
+				var t = new Token(word, false, Field.TEXT_MASK);
+				t.segment = seg;
+				tokens.add(t);
+			}
+		}
+		if (lastIsPrefix && !tokens.isEmpty() && !text.strip().endsWith(",")) {
+			// Rebuild the last token as a prefix: it may still be being typed.
+			Token last = tokens.removeLast();
+			var t = new Token(last.text, true, Field.TEXT_MASK);
+			t.segment = last.segment;
+			tokens.add(t);
 		}
 		if (tokens.isEmpty()) {
 			return List.of();

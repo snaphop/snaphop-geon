@@ -16,7 +16,7 @@ import ai.snaphop.geon.Place;
 /// ```
 /// score = 0.75 * relevance + 0.25 * standing + bonuses
 ///
-/// relevance = 0.55 * text + 0.45 * completeness
+/// relevance = 0.45 * text + 0.4 * completeness + 0.15 * lead
 /// text      = sum(token length * match quality * field weight) / sum(token length)
 /// completeness = share of the result's own name (or street and house number)
 ///                that the query covers; a prefix covers only the typed share of
@@ -29,6 +29,8 @@ import ai.snaphop.geon.Place;
 ///   [#FUZZY_QUALITY] for a term within an edit distance of 1 or 2.
 /// * Field weights prefer a match in the place's own name over a match in its
 ///   address, see [#fieldWeight(int)].
+/// * Lead is the share of the query (its first comma separated part, if any) that
+///   matches the result's own name or house number, see [#lead].
 /// * Proximity follows Photon's curve: close to 1 within the bias radius, then halving
 ///   every [LocationBias#decayKm()].
 /// * Bonuses: [#TARGET_BONUS] when a structured search's most specific part names
@@ -134,7 +136,7 @@ final class Scoring {
 			return;
 		}
 		double completeness = completeness(p, c.matches);
-		double relevance = 0.55 * c.text + 0.45 * completeness;
+		double relevance = 0.45 * c.text + 0.4 * completeness + 0.15 * lead(p, c.matches);
 		double bonus = 0;
 		if (target != null && p.addressType() == target) {
 			bonus += TARGET_BONUS;
@@ -195,6 +197,30 @@ final class Scoring {
 			return 1.0 - 0.1 * km / radius;
 		}
 		return 0.9 * Math.exp(Math.log(0.5) * (km - radius) / b.decayKm());
+	}
+
+	/// How much of the query names the result itself. With commas only the first part
+	/// counts: people type "name, city", so in `Vordere Schwendistrasse, Wildhaus` the
+	/// street wins over a map board named Wildhaus that stands on it. Without commas all
+	/// words count, so `Fussweg z` prefers "Fussweg zur Badi" over a "Fussweg" in Zürich.
+	/// @return the share of those words' letters matched in the result's name or house
+	///   number (or street, for an address).
+	private static double lead(Place p, Searcher.TokenMatch[] matches) {
+		int total = 0;
+		int named = 0;
+		for (Searcher.TokenMatch m : matches) {
+			if (m == null || m.token().segment != 0) {
+				continue;
+			}
+			total += m.token().length;
+			int f = m.field();
+			boolean identity = f == Field.NAME.ordinal() || f == Field.HOUSENUMBER.ordinal()
+					|| (f == Field.STREET.ordinal() && p.houseNumber() != null && p.names().isEmpty());
+			if (identity) {
+				named += m.token().length;
+			}
+		}
+		return total == 0 ? 0 : (double) named / total;
 	}
 
 	/// The share of the result's identifying words that the query covers. A query for
