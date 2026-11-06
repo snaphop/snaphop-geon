@@ -105,15 +105,15 @@ final class Scoring {
 		};
 	}
 
-	static double text(Searcher.TokenMatch[] matches) {
+	static double text(TokenMatch[] matches) {
 		double total = 0;
 		double matched = 0;
-		for (Searcher.TokenMatch m : matches) {
+		for (TokenMatch m : matches) {
 			if (m != null) {
 				matched += m.token().length * m.quality();
 			}
 		}
-		for (Searcher.TokenMatch m : matches) {
+		for (TokenMatch m : matches) {
 			total += m == null ? 1 : m.token().length;
 		}
 		return total == 0 ? 0 : matched / total;
@@ -144,7 +144,7 @@ final class Scoring {
 		if (suggestAddresses && p.houseNumber() != null && p.names().isEmpty()) {
 			bonus += ADDRESS_BONUS;
 		}
-		for (Searcher.TokenMatch m : c.matches) {
+		for (TokenMatch m : c.matches) {
 			if (m != null && m.field() == Field.HOUSENUMBER.ordinal() && m.quality() == 1.0) {
 				bonus += HOUSENUMBER_BONUS;
 				break;
@@ -205,10 +205,10 @@ final class Scoring {
 	/// words count, so `Fussweg z` prefers "Fussweg zur Badi" over a "Fussweg" in Zürich.
 	/// @return the share of those words' letters matched in the result's name or house
 	///   number (or street, for an address).
-	private static double lead(Place p, Searcher.TokenMatch[] matches) {
+	private static double lead(Place p, TokenMatch[] matches) {
 		int total = 0;
 		int named = 0;
-		for (Searcher.TokenMatch m : matches) {
+		for (TokenMatch m : matches) {
 			if (m == null || m.token().segment != 0) {
 				continue;
 			}
@@ -225,7 +225,7 @@ final class Scoring {
 
 	/// The share of the result's identifying words that the query covers. A query for
 	/// `berlin` covers all of `Berlin` but only half of `Berlin Hauptbahnhof`.
-	private double completeness(Place p, Searcher.TokenMatch[] matches) {
+	private double completeness(Place p, TokenMatch[] matches) {
 		String name = p.displayNameOrNull(language.preferred(), language.fallback());
 		List<String> identity;
 		if (name != null) {
@@ -247,7 +247,7 @@ final class Scoring {
 		double covered = 0;
 		for (String word : identity) {
 			double best = 0;
-			for (Searcher.TokenMatch m : matches) {
+			for (TokenMatch m : matches) {
 				if (m != null) {
 					best = Math.max(best, coverage(m.token(), word));
 				}
@@ -259,7 +259,7 @@ final class Scoring {
 
 	/// How much of a word a query token covers: all of it when equal, the typed share
 	/// when it is a prefix (`de` covers a third of `denner`), and most of it for a typo.
-	private static double coverage(Searcher.Token t, String word) {
+	private static double coverage(Token t, String word) {
 		if (word.equals(t.text) || t.synonymTexts.contains(word)) {
 			return 1.0;
 		}

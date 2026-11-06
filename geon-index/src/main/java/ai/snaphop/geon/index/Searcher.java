@@ -2,7 +2,6 @@ package ai.snaphop.geon.index;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -94,58 +93,6 @@ final class Searcher {
 		}
 	}
 
-	/// A query token and the term IDs it can match.
-	static final class Token {
-
-		final String text;
-
-		final int length;
-
-		final boolean prefix;
-
-		final int allowed;
-
-		/// Which comma separated part of the query the token is in, 0 for the first.
-		int segment;
-
-		int exactId = -1;
-
-		int prefixFrom;
-
-		int prefixTo;
-
-		/// ID of the capped prefix list term for short prefixes, or -1.
-		int prefixListId = -1;
-
-		int[] fuzzyIds = new int[0];
-
-		int[] fuzzyDistances = new int[0];
-
-		/// Terms of synonyms of the word; they match like the word itself.
-		int[] synonymIds = new int[0];
-
-		List<String> synonymTexts = List.of();
-
-		/// Category terms the word classifies, such as `osm.railway.station` for `station`.
-		int[] classIds = new int[0];
-
-		Token(String text, boolean prefix, int allowed) {
-			this.text = text;
-			this.length = text.codePointCount(0, text.length());
-			this.prefix = prefix;
-			this.allowed = allowed;
-		}
-
-		boolean hasStrictTerms() {
-			return exactId >= 0 || synonymIds.length > 0 || classIds.length > 0 || (prefix && prefixTo > prefixFrom);
-		}
-
-	}
-
-	/// How a token matched a doc.
-	record TokenMatch(Token token, double quality, int field) {
-	}
-
 	/// A doc that passed verification, with its preliminary score.
 	static final class Candidate {
 
@@ -172,7 +119,7 @@ final class Searcher {
 
 	List<Hit> search(SearchQuery q) {
 		QueryOptions o = q.options();
-		var filter = new Filter(o.filter());
+		var filter = new PreparedFilter(o.filter(), terms, docs);
 		String text = q.text();
 		if (text == null) {
 			return byFilterOnly(filter, q.bias(), o);
@@ -210,8 +157,8 @@ final class Searcher {
 		if (q.countryCode() != null) {
 			countries = Set.of(q.countryCode().toUpperCase(Locale.ROOT));
 		}
-		var filter = new Filter(new PlaceFilter(countries, base.layers(), base.tagFilters(), base.includeCategories(),
-				base.excludeCategories(), base.bbox()));
+		var filter = new PreparedFilter(new PlaceFilter(countries, base.layers(), base.tagFilters(), base.includeCategories(),
+				base.excludeCategories(), base.bbox()), terms, docs);
 		// The most specific part names the result; broader parts must match its address.
 		record Part(@Nullable String value, int field, AddressType type) {
 		}
@@ -248,8 +195,8 @@ final class Searcher {
 			if (q.countryCode() == null) {
 				return List.of();
 			}
-			var countryFilter = new Filter(new PlaceFilter(countries, Set.of(AddressType.COUNTRY), List.of(), List.of(),
-					List.of(), null));
+			var countryFilter = new PreparedFilter(new PlaceFilter(countries, Set.of(AddressType.COUNTRY), List.of(), List.of(),
+					List.of(), null), terms, docs);
 			return byFilterOnly(countryFilter, q.bias(), o);
 		}
 		var scoring = new Scoring(o.language(), q.bias(), target, false, o.explain());
@@ -258,7 +205,7 @@ final class Searcher {
 
 	// ---------------------------------------------------------------- shared engine
 
-	private List<Hit> run(List<Token> tokens, Filter filter, Scoring scoring, QueryOptions o) {
+	private List<Hit> run(List<Token> tokens, PreparedFilter filter, Scoring scoring, QueryOptions o) {
 		for (Token t : tokens) {
 			resolve(t);
 		}
@@ -354,7 +301,7 @@ final class Searcher {
 	/// Collects verified candidates.
 	///
 	/// @param missing how many tokens may be left unmatched; 0 means a strict pass.
-	private void collect(List<Token> tokens, Filter filter, int missing, int limit, List<Candidate> out) {
+	private void collect(List<Token> tokens, PreparedFilter filter, int missing, int limit, List<Candidate> out) {
 		boolean lenient = missing > 0 || tokens.stream().anyMatch(t -> t.fuzzyIds.length > 0);
 		var verifier = new Verifier(tokens, filter, missing, out);
 		var docIds = new IntList();
@@ -489,7 +436,7 @@ final class Searcher {
 
 		private final List<Token> tokens;
 
-		private final Filter filter;
+		private final PreparedFilter filter;
 
 		private final int missing;
 
@@ -499,7 +446,7 @@ final class Searcher {
 
 		private final HashSet<Integer> seen = new HashSet<>();
 
-		Verifier(List<Token> tokens, Filter filter, int missing, List<Candidate> out) {
+		Verifier(List<Token> tokens, PreparedFilter filter, int missing, List<Candidate> out) {
 			this.tokens = tokens;
 			this.filter = filter;
 			this.missing = missing;
@@ -797,7 +744,7 @@ final class Searcher {
 
 	// ---------------------------------------------------------------- filter only
 
-	private List<Hit> byFilterOnly(Filter filter, @Nullable LocationBias bias, QueryOptions o) {
+	private List<Hit> byFilterOnly(PreparedFilter filter, @Nullable LocationBias bias, QueryOptions o) {
 		var candidates = new ArrayList<Candidate>();
 		var entries = new Forward.Entries();
 		var none = new TokenMatch[0];
@@ -855,7 +802,7 @@ final class Searcher {
 
 	List<Hit> reverse(ReverseQuery q) {
 		QueryOptions o = q.options();
-		var filter = new Filter(o.filter());
+		var filter = new PreparedFilter(o.filter(), terms, docs);
 		var entries = new Forward.Entries();
 		var found = new ArrayList<Candidate>();
 		var dedupe = o.dedupe() ? new StreetDedupe() : null;
@@ -891,111 +838,5 @@ final class Searcher {
 	}
 
 	// ---------------------------------------------------------------- filters
-
-	/// A [PlaceFilter] prepared for fast checks against doc records.
-	private final class Filter {
-
-		final PlaceFilter filter;
-
-		final int[] countries;
-
-		final EnumSet<AddressType> layers;
-
-		final int[][] includeIds;
-
-		final int[][] excludeIds;
-
-		Filter(PlaceFilter filter) {
-			this.filter = filter;
-			this.countries = filter.countryCodes().stream().mapToInt(DocCodec::packCountry).toArray();
-			this.layers = filter.layers().isEmpty() ? EnumSet.noneOf(AddressType.class) : EnumSet.copyOf(filter.layers());
-			this.includeIds = categoryIds(filter.includeCategories());
-			this.excludeIds = categoryIds(filter.excludeCategories());
-		}
-
-		private int[][] categoryIds(List<Set<String>> groups) {
-			int[][] out = new int[groups.size()][];
-			for (int g = 0; g < out.length; g++) {
-				out[g] = groups.get(g).stream()
-					.mapToInt(c -> terms.find(Terms.utf8(Field.CATEGORY_PREFIX + c)))
-					.toArray();
-			}
-			return out;
-		}
-
-		boolean passesFixed(int doc) {
-			if (countries.length > 0) {
-				int packed = docs.packedCountry(doc);
-				boolean ok = false;
-				for (int c : countries) {
-					ok |= c == packed;
-				}
-				if (!ok) {
-					return false;
-				}
-			}
-			if (!layers.isEmpty() && !layers.contains(docs.addressType(doc))) {
-				return false;
-			}
-			BBox bbox = filter.bbox();
-			if (bbox != null && !bbox.contains(docs.lon(doc), docs.lat(doc))) {
-				return false;
-			}
-			return filter.tagFilters().isEmpty() || filter.testTags(docs.osmKey(doc), docs.osmValue(doc));
-		}
-
-		boolean passesCategories(Forward.Entries e) {
-			for (int[] group : includeIds) {
-				boolean any = false;
-				for (int id : group) {
-					any |= id >= 0 && e.mask(id) != 0;
-				}
-				if (!any) {
-					return false;
-				}
-			}
-			for (int[] group : excludeIds) {
-				boolean all = group.length > 0;
-				for (int id : group) {
-					all &= id >= 0 && e.mask(id) != 0;
-				}
-				if (all) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-	}
-
-	/// Removes repeated streets: long streets are split into many OSM ways that all
-	/// carry the same name.
-	private static final class StreetDedupe {
-
-		private final Set<String> seen = new HashSet<>();
-
-		boolean keep(Place p) {
-			if (!p.osmKey().equals("highway")) {
-				return true;
-			}
-			String name = p.names().get(Place.DEFAULT_NAME);
-			if (name == null) {
-				return true;
-			}
-			String postcode = p.postcode() == null ? "" : p.postcode();
-			int space = postcode.indexOf(' ');
-			if (space > 0) {
-				// Compare postcode districts where full postcodes split streets: NL 1234 AB, GB SW1A 1AA.
-				if ("NL".equals(p.countryCode())) {
-					postcode = postcode.substring(0, space);
-				}
-				else if ("GB".equals(p.countryCode()) && postcode.length() > space + 2) {
-					postcode = postcode.substring(0, space + 2);
-				}
-			}
-			return seen.add(p.osmValue() + ':' + postcode + ':' + name + ':' + p.countryCode());
-		}
-
-	}
 
 }
