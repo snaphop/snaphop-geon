@@ -311,9 +311,6 @@ final class Searcher {
 		// word in their name or house number, so intersect with those words' primary
 		// postings before reading any place's terms.
 		if (tokens.size() > 1) {
-			var secondary = new IntList();
-			secondaryDocs(driver, secondary);
-			secondary.sortUniqueTruncate(Integer.MAX_VALUE);
 			var identified = new IntList();
 			for (Token t : tokens) {
 				if (t != driver) {
@@ -321,7 +318,17 @@ final class Searcher {
 				}
 			}
 			identified.sortUniqueTruncate(Integer.MAX_VALUE);
-			verifier.verify(intersect(secondary, identified));
+			if (identified.size() <= secondaryCost(driver)) {
+				// Fewer places are named by the other words than have the driving word in
+				// their address: check those directly, the driving word included.
+				verifier.verify(identified);
+			}
+			else {
+				var secondary = new IntList();
+				secondaryDocs(driver, secondary);
+				secondary.sortUniqueTruncate(Integer.MAX_VALUE);
+				verifier.verify(intersect(secondary, identified));
+			}
 		}
 	}
 
@@ -442,6 +449,22 @@ final class Searcher {
 			return out.size() >= MATCH_TARGET;
 		}
 
+	}
+
+	/// How many secondary postings a token would read.
+	private long secondaryCost(Token t) {
+		long sum = 0;
+		if (t.prefix) {
+			if (t.prefixListId < 0) {
+				for (int id = t.prefixFrom; id < t.prefixTo; id++) {
+					sum += terms.totalCount(id) - terms.primaryCount(id);
+				}
+			}
+		}
+		else if (t.exactId >= 0) {
+			sum += terms.totalCount(t.exactId) - terms.primaryCount(t.exactId);
+		}
+		return sum;
 	}
 
 	/// How many primary postings a token would read.
