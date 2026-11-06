@@ -71,6 +71,22 @@ class OptionsTest {
 	}
 
 	@Test
+	void rejectsABadImportBox() throws Exception {
+		var o = Options.parse(List.of("-import-bbox", "-73.8,40.9,-66.8"), Set.of(), Set.of("import-bbox"), Set.of(),
+				Map.of(), new ArrayList<>());
+		var e = assertThrows(Options.UsageException.class, () -> Main.bbox(o));
+		assertEquals("Invalid box '-73.8,40.9,-66.8' for -import-bbox. Use minLon,minLat,maxLon,maxLat in degrees,"
+				+ " for example -73.8,40.9,-66.8,47.5.", e.getMessage());
+	}
+
+	@Test
+	void readsAnImportBox() throws Exception {
+		var o = Options.parse(List.of(), Set.of(), Set.of("import-bbox"), Set.of(),
+				Map.of("GEON_IMPORT_BBOX", "-73.8, 40.9, -66.8, 47.5"), new ArrayList<>());
+		assertEquals("BBox[minLon=-73.8, minLat=40.9, maxLon=-66.8, maxLat=47.5]", String.valueOf(Main.bbox(o)));
+	}
+
+	@Test
 	void reportsUnknownGeonVariables() {
 		var env = Map.of("GEON_LISTN_PORT", "1", "GEON_LISTEN_PORT", "2", "GEON_LOG_level", "debug",
 				"GEON_JAVA_OPTS", "-Xmx1g", "GEON_IMPORT_MEMORY", "1g", "HOME", "/root");

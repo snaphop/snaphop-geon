@@ -17,6 +17,8 @@ import java.util.zip.GZIPInputStream;
 
 import org.jspecify.annotations.Nullable;
 
+import ai.snaphop.geon.BBox;
+import ai.snaphop.geon.GeoPoint;
 import ai.snaphop.geon.GeonVersion;
 import ai.snaphop.geon.IndexInfo;
 import ai.snaphop.geon.Synonyms;
@@ -75,6 +77,9 @@ public final class Main {
 			  -extra-tags TAGS     ALL, or a comma separated list of extra tags to keep.
 			  -full-geometries     Keep full geometries for 'geometry=1' responses.
 			  -country-codes CC,.. Only import these countries.
+			  -import-bbox BOX     Only import places inside minLon,minLat,maxLon,maxLat, for
+			                       example New England from the USA dump:
+			                       -73.8,40.9,-66.8,47.5
 			  -import-memory SIZE  Memory for collecting postings before writing them to disk,
 			                       for example 512m or 4g. Default: a quarter of the heap.
 			  -tmp-dir DIR         Directory for temporary import files (default: the index
@@ -100,7 +105,7 @@ public final class Main {
 	private static final Set<String> IMPORT_SWITCHES = Set.of("full-geometries");
 
 	private static final Set<String> IMPORT_OPTIONS = Set.of("data-dir", "index", "import-file", "languages",
-			"extra-tags", "country-codes", "import-memory", "tmp-dir");
+			"extra-tags", "country-codes", "import-bbox", "import-memory", "tmp-dir");
 
 	private static final Set<String> SERVE_SWITCHES = Set.of("cors-any");
 
@@ -192,6 +197,7 @@ public final class Main {
 			.extraTags(o.has("extra-tags") ? ExtraTags.parse(o.value("extra-tags", "")) : ExtraTags.NONE)
 			.geometries(o.has("full-geometries"))
 			.countryCodes(o.list("country-codes"))
+			.bbox(bbox(o))
 			.build();
 		Path index = indexFile(o);
 		long start = System.nanoTime();
@@ -211,6 +217,32 @@ public final class Main {
 				out.printf("Imported %,d places (%,d skipped) into %s (%,d bytes) in %.1f s.%n", info.placeCount(),
 						summary.skippedCount(), index, Files.size(index), (System.nanoTime() - start) / 1e9);
 			}
+		}
+	}
+
+	/// Parses `-import-bbox`: `minLon,minLat,maxLon,maxLat`.
+	/// @return the box or `null`.
+	static @Nullable BBox bbox(Options o) throws Options.UsageException {
+		String value = o.valueOrNull("import-bbox");
+		if (value == null) {
+			return null;
+		}
+		String[] parts = value.split(",");
+		try {
+			if (parts.length != 4) {
+				throw new IllegalArgumentException();
+			}
+			double[] v = new double[4];
+			for (int i = 0; i < 4; i++) {
+				v[i] = Double.parseDouble(parts[i].strip());
+			}
+			new GeoPoint(v[0], v[1]);
+			new GeoPoint(v[2], v[3]);
+			return new BBox(v[0], v[1], v[2], v[3]);
+		}
+		catch (IllegalArgumentException e) {
+			throw new Options.UsageException("Invalid box '" + value + "' for " + o.source("import-bbox")
+					+ ". Use minLon,minLat,maxLon,maxLat in degrees, for example -73.8,40.9,-66.8,47.5.");
 		}
 	}
 

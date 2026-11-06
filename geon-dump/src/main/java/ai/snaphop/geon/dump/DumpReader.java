@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 
 import org.jspecify.annotations.Nullable;
 
+import ai.snaphop.geon.BBox;
 import ai.snaphop.geon.Place;
 import io.avaje.json.JsonException;
 import io.avaje.json.JsonReader;
@@ -57,11 +58,14 @@ public final class DumpReader {
 
 	private final Set<String> countryCodes;
 
+	private final @Nullable BBox bbox;
+
 	private DumpReader(Builder b) {
 		this.languages = Set.copyOf(b.languages);
 		this.extraTags = b.extraTags;
 		this.geometries = b.geometries;
 		this.countryCodes = Set.copyOf(b.countryCodes);
+		this.bbox = b.bbox;
 	}
 
 	/// Starts configuring a reader.
@@ -283,6 +287,11 @@ public final class DumpReader {
 				skippedCount++;
 				return;
 			}
+			double[] c = raw.centroid;
+			if (bbox != null && (c == null || !bbox.contains(c[0], c[1]))) {
+				skippedCount++;
+				return;
+			}
 			List<Place> places = assembler.assemble(raw, splitAddresses);
 			if (places.isEmpty()) {
 				skippedCount++;
@@ -321,6 +330,8 @@ public final class DumpReader {
 
 		private final Set<String> countryCodes = new LinkedHashSet<>();
 
+		private @Nullable BBox bbox;
+
 		private Builder() {
 		}
 
@@ -356,6 +367,15 @@ public final class DumpReader {
 		public Builder countryCodes(Collection<String> countryCodes) {
 			this.countryCodes.clear();
 			countryCodes.forEach(c -> this.countryCodes.add(c.toUpperCase(Locale.ROOT)));
+			return this;
+		}
+
+		/// Only import places whose centroid lies in this box, for a region that has no
+		/// dump of its own, such as New England from the USA dump. Defaults to no limit.
+		/// @param bbox the box or `null`.
+		/// @return this.
+		public Builder bbox(@Nullable BBox bbox) {
+			this.bbox = bbox;
 			return this;
 		}
 
