@@ -7,10 +7,10 @@ import java.util.Map;
 
 import org.jspecify.annotations.Nullable;
 
-import io.avaje.json.JsonReader;
-import io.avaje.json.JsonWriter;
+import com.snaphop.jsonl.JsonReader;
+import com.snaphop.jsonl.JsonWriter;
 
-/// Small pull parsing helpers on top of avaje's [JsonReader].
+/// Small pull parsing helpers on top of snaphop-jsonl's [JsonReader].
 final class Json {
 
 	private Json() {
@@ -18,9 +18,9 @@ final class Json {
 
 	/// Reads a string, or the first string of an array of strings. Anything else is skipped.
 	static @Nullable String stringOrFirst(JsonReader r) {
-		var token = r.currentToken();
+		var token = r.peek();
 		if (token == JsonReader.Token.STRING) {
-			return r.readString();
+			return r.nextString();
 		}
 		if (token == JsonReader.Token.BEGIN_ARRAY) {
 			List<String> all = strings(r);
@@ -33,15 +33,15 @@ final class Json {
 	/// Reads a string or an array of strings into a list. Non string elements are skipped.
 	static List<String> strings(JsonReader r) {
 		var out = new ArrayList<String>(2);
-		var token = r.currentToken();
+		var token = r.peek();
 		if (token == JsonReader.Token.STRING) {
-			out.add(r.readString());
+			out.add(r.nextString());
 		}
 		else if (token == JsonReader.Token.BEGIN_ARRAY) {
 			r.beginArray();
-			while (r.hasNextElement()) {
-				if (r.currentToken() == JsonReader.Token.STRING) {
-					out.add(r.readString());
+			while (r.hasNext()) {
+				if (r.peek() == JsonReader.Token.STRING) {
+					out.add(r.nextString());
 				}
 				else {
 					r.skipValue();
@@ -59,12 +59,12 @@ final class Json {
 	/// kept. Other values are skipped. A `null` reads as an empty map.
 	static Map<String, String> stringMap(JsonReader r) {
 		var out = new LinkedHashMap<String, String>();
-		if (r.isNullValue()) {
+		if (r.nextIfNull()) {
 			return out;
 		}
 		r.beginObject();
-		while (r.hasNextField()) {
-			String key = r.nextField();
+		while (r.hasNext()) {
+			String key = r.nextName();
 			String value = stringOrFirst(r);
 			if (value != null) {
 				out.put(key, value);
@@ -79,12 +79,12 @@ final class Json {
 		double[] out = new double[n];
 		int i = 0;
 		r.beginArray();
-		while (r.hasNextElement()) {
-			if (i >= n || r.currentToken() != JsonReader.Token.NUMBER) {
+		while (r.hasNext()) {
+			if (i >= n || r.peek() != JsonReader.Token.NUMBER) {
 				throw new DumpFormatException("Invalid " + field + ": expected an array of " + n + " numbers " + where
 						+ " (" + r.location() + ").");
 			}
-			out[i++] = r.readDouble();
+			out[i++] = r.nextDouble();
 		}
 		r.endArray();
 		if (i != n) {
@@ -96,12 +96,12 @@ final class Json {
 
 	/// Copies any JSON value from the reader to the writer.
 	static void copy(JsonReader r, JsonWriter w) {
-		switch (r.currentToken()) {
+		switch (r.peek()) {
 			case BEGIN_OBJECT -> {
 				r.beginObject();
 				w.beginObject();
-				while (r.hasNextField()) {
-					w.name(r.nextField());
+				while (r.hasNext()) {
+					w.name(r.nextName());
 					copy(r, w);
 				}
 				r.endObject();
@@ -110,19 +110,19 @@ final class Json {
 			case BEGIN_ARRAY -> {
 				r.beginArray();
 				w.beginArray();
-				while (r.hasNextElement()) {
+				while (r.hasNext()) {
 					copy(r, w);
 				}
 				r.endArray();
 				w.endArray();
 			}
-			case STRING -> w.value(r.readString());
-			case BOOLEAN -> w.value(r.readBoolean());
+			case STRING -> w.value(r.nextString());
+			case BOOLEAN -> w.value(r.nextBoolean());
 			case NULL -> {
-				r.isNullValue();
+				r.nextNull();
 				w.nullValue();
 			}
-			default -> w.value(r.readDecimal());
+			default -> w.value(r.nextBigDecimal());
 		}
 	}
 
@@ -140,14 +140,14 @@ final class Json {
 
 	private static void geometryValue(JsonReader r, double[] envelope, @Nullable JsonWriter w,
 			boolean inCoordinates) {
-		switch (r.currentToken()) {
+		switch (r.peek()) {
 			case BEGIN_OBJECT -> {
 				r.beginObject();
 				if (w != null) {
 					w.beginObject();
 				}
-				while (r.hasNextField()) {
-					String name = r.nextField();
+				while (r.hasNext()) {
+					String name = r.nextName();
 					if (w != null) {
 						w.name(name);
 					}
@@ -165,9 +165,9 @@ final class Json {
 				}
 				int index = 0;
 				double lon = 0;
-				while (r.hasNextElement()) {
-					if (inCoordinates && r.currentToken() == JsonReader.Token.NUMBER) {
-						double v = r.readDouble();
+				while (r.hasNext()) {
+					if (inCoordinates && r.peek() == JsonReader.Token.NUMBER) {
+						double v = r.nextDouble();
 						if (w != null) {
 							w.value(v);
 						}

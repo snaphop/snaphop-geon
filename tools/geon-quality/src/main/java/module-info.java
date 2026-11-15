@@ -2,7 +2,7 @@
 module ai.snaphop.geon.quality {
 	requires ai.snaphop.geon.dump;
 	requires ai.snaphop.geon;
-	requires io.avaje.json;
+	requires com.snaphop.jsonl;
 	requires java.net.http;
 	requires static org.jspecify;
 }

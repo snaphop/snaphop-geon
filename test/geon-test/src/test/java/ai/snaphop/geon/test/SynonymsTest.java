@@ -16,7 +16,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import ai.snaphop.geon.photon.PhotonSynonyms;
-import io.avaje.json.mapper.JsonMapper;
 
 /// Synonyms and classification terms loaded from a Photon synonym file.
 class SynonymsTest {
@@ -101,7 +100,7 @@ class SynonymsTest {
 
 	@SuppressWarnings("unchecked")
 	private static String names(String body) {
-		var features = (List<Map<String, Object>>) JsonMapper.builder().build().fromJsonObject(body).get("features");
+		var features = (List<Map<String, Object>>) com.snaphop.jsonl.Json.map(com.snaphop.jsonl.Json.read(body)).get("features");
 		var sb = new StringBuilder();
 		for (var f : features) {
 			var p = (Map<String, Object>) f.get("properties");

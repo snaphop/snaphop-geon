@@ -14,7 +14,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import ai.snaphop.geon.photon.PhotonSynonyms;
-import io.avaje.json.mapper.JsonMapper;
 
 /// Photon and Geon serving the `zedland` fixture with the same synonym file must
 /// return the same places.
@@ -89,7 +88,7 @@ class PhotonSynonymsDifferentialTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<String> places(String body) {
-		var features = (List<Map<String, Object>>) JsonMapper.builder().build().fromJsonObject(body).get("features");
+		var features = (List<Map<String, Object>>) com.snaphop.jsonl.Json.map(com.snaphop.jsonl.Json.read(body)).get("features");
 		return features.stream().map(f -> {
 			var p = (Map<String, Object>) f.get("properties");
 			return p.get("osm_type") + "" + p.get("osm_id");

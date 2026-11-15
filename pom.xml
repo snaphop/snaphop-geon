@@ -61,11 +61,22 @@
     <maven.core.version>3.10.0</maven.core.version>
 
     <jspecify.version>1.0.1</jspecify.version>
-    <avaje-json.version>3.16</avaje-json.version>
+    <snaphop-jsonl.version>0.1.0</snaphop-jsonl.version>
     <netty.version>4.2.20.Final</netty.version>
     <rainbowgum.version>0.17.0</rainbowgum.version>
     <junit.version>6.1.3</junit.version>
   </properties>
+
+  <repositories>
+    <repository>
+      <!-- SnapHop's libraries: snaphop-jsonl. -->
+      <id>snaphop-public-release</id>
+      <url>https://maven.snaphop.com/release</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
 
   <dependencyManagement>
     <dependencies>
@@ -100,9 +111,9 @@
         <version>${jspecify.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.avaje</groupId>
-        <artifactId>avaje-json-core</artifactId>
-        <version>${avaje-json.version}</version>
+        <groupId>com.snaphop</groupId>
+        <artifactId>snaphop-jsonl</artifactId>
+        <version>${snaphop-jsonl.version}</version>
       </dependency>
       <dependency>
         <groupId>io.netty</groupId>

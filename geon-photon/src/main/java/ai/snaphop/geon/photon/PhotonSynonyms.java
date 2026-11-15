@@ -14,8 +14,8 @@ import org.jspecify.annotations.Nullable;
 
 import ai.snaphop.geon.ClassificationTerm;
 import ai.snaphop.geon.Synonyms;
-import io.avaje.json.JsonException;
-import io.avaje.json.JsonReader;
+import com.snaphop.jsonl.JsonException;
+import com.snaphop.jsonl.JsonReader;
 
 /// Reads Photon's synonym file (`-synonym-file`).
 ///
@@ -44,7 +44,7 @@ public final class PhotonSynonyms {
 	/// @throws IOException if the file cannot be read, is not valid JSON, or breaks
 	///   Photon's rules; the message says which entry.
 	public static Synonyms load(Path file) throws IOException {
-		try (JsonReader r = PhotonError.JSON.reader(Files.readAllBytes(file))) {
+		try (JsonReader r = JsonReader.of(Files.readAllBytes(file))) {
 			return read(r);
 		}
 		catch (JsonException e) {
@@ -59,16 +59,16 @@ public final class PhotonSynonyms {
 		var groups = new ArrayList<Set<String>>();
 		var classifications = new ArrayList<ClassificationTerm>();
 		r.beginObject();
-		while (r.hasNextField()) {
-			String field = r.nextField();
-			if (r.isNullValue()) {
+		while (r.hasNext()) {
+			String field = r.nextName();
+			if (r.nextIfNull()) {
 				continue;
 			}
 			switch (field) {
 				case "search_synonyms" -> {
 					r.beginArray();
-					while (r.hasNextElement()) {
-						String entry = r.readString();
+					while (r.hasNext()) {
+						String entry = r.nextString();
 						if (entry.matches(".*[ '-].*")) {
 							throw new IllegalArgumentException(
 									"Error in synonym entry '" + entry + "'. Terms must not contain spaces or hyphens.");
@@ -87,7 +87,7 @@ public final class PhotonSynonyms {
 				}
 				case "classification_terms" -> {
 					r.beginArray();
-					while (r.hasNextElement()) {
+					while (r.hasNext()) {
 						ClassificationTerm term = classification(r);
 						if (term != null) {
 							classifications.add(term);
@@ -107,19 +107,19 @@ public final class PhotonSynonyms {
 		String value = null;
 		List<String> terms = new ArrayList<>();
 		r.beginObject();
-		while (r.hasNextField()) {
-			String field = r.nextField();
-			if (r.isNullValue()) {
+		while (r.hasNext()) {
+			String field = r.nextName();
+			if (r.nextIfNull()) {
 				continue;
 			}
 			switch (field) {
-				case "key" -> key = r.readString();
-				case "value" -> value = r.readString();
+				case "key" -> key = r.nextString();
+				case "value" -> value = r.nextString();
 				case "terms" -> {
 					r.beginArray();
-					while (r.hasNextElement()) {
-						if (!r.isNullValue()) {
-							terms.add(r.readString());
+					while (r.hasNext()) {
+						if (!r.nextIfNull()) {
+							terms.add(r.nextString());
 						}
 					}
 					r.endArray();

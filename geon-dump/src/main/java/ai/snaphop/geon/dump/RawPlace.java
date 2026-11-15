@@ -8,8 +8,8 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 import ai.snaphop.geon.AddressType;
-import io.avaje.json.JsonReader;
-import io.avaje.json.stream.JsonStream;
+import com.snaphop.jsonl.JsonReader;
+import com.snaphop.jsonl.JsonWriter;
 
 /// One element of a `Place` document exactly as the dump states it, before names and
 /// addresses are interpreted.
@@ -57,29 +57,29 @@ final class RawPlace {
 	final List<String> addressLinePlaceIds = new ArrayList<>();
 
 	/// Parses one place object. The reader must be positioned at the object's start.
-	static RawPlace parse(JsonReader r, JsonStream json, ExtraTags extraTags, boolean keepGeometry)
+	static RawPlace parse(JsonReader r, ExtraTags extraTags, boolean keepGeometry)
 			throws DumpFormatException {
 		var p = new RawPlace();
 		r.beginObject();
-		while (r.hasNextField()) {
-			String field = r.nextField();
-			if (r.isNullValue()) {
+		while (r.hasNext()) {
+			String field = r.nextName();
+			if (r.nextIfNull()) {
 				continue;
 			}
 			switch (field) {
 				case "place_id" -> p.placeId = p.readPlaceId(r);
-				case "object_type" -> p.objectType = r.readString();
-				case "object_id" -> p.objectId = r.readLong();
-				case "osm_key" -> p.osmKey = r.readString();
-				case "osm_value" -> p.osmValue = r.readString();
+				case "object_type" -> p.objectType = r.nextString();
+				case "object_id" -> p.objectId = r.nextLong();
+				case "osm_key" -> p.osmKey = r.nextString();
+				case "osm_value" -> p.osmValue = r.nextString();
 				case "categories" -> p.categories = Json.strings(r);
 				case "address_type" -> {
-					AddressType type = AddressType.ofLabelOrNull(r.readString());
+					AddressType type = AddressType.ofLabelOrNull(r.nextString());
 					p.addressType = type == null ? AddressType.OTHER : type;
 				}
-				case "rank_address" -> p.addressType = AddressType.ofRank(r.readInt());
+				case "rank_address" -> p.addressType = AddressType.ofRank(r.nextInt());
 				case "importance" -> {
-					double v = r.readDouble();
+					double v = r.nextDouble();
 					if (Double.isFinite(v)) {
 						p.importance = v;
 					}
@@ -87,12 +87,12 @@ final class RawPlace {
 				case "name" -> p.names = Json.stringMap(r);
 				case "housenumber" -> p.houseNumber = Json.stringOrFirst(r);
 				case "address" -> p.readAddress(r);
-				case "extra" -> p.extraJson = readExtra(r, json, extraTags);
+				case "extra" -> p.extraJson = readExtra(r, extraTags);
 				case "postcode" -> p.postcode = Json.stringOrFirst(r);
-				case "country_code" -> p.countryCode = r.readString();
+				case "country_code" -> p.countryCode = r.nextString();
 				case "centroid" -> p.centroid = Json.numbers(r, 2, "centroid", p.where());
 				case "bbox" -> p.bbox = Json.numbers(r, 4, "bbox", p.where());
-				case "geometry" -> p.readGeometry(r, json, keepGeometry);
+				case "geometry" -> p.readGeometry(r, keepGeometry);
 				case "addresslines" -> p.readAddressLines(r);
 				default -> r.skipValue();
 			}
@@ -106,10 +106,10 @@ final class RawPlace {
 	}
 
 	private String readPlaceId(JsonReader r) throws DumpFormatException {
-		if (r.currentToken() == JsonReader.Token.NUMBER) {
-			return Long.toString(r.readLong());
+		if (r.peek() == JsonReader.Token.NUMBER) {
+			return Long.toString(r.nextLong());
 		}
-		String id = r.readString();
+		String id = r.nextString();
 		if (!PLACE_ID.matcher(id).matches()) {
 			throw new DumpFormatException("Invalid place_id '" + id
 					+ "': it must be 1 to 60 letters, digits, dashes or underscores (" + r.location() + ").");
@@ -119,8 +119,8 @@ final class RawPlace {
 
 	private void readAddress(JsonReader r) {
 		r.beginObject();
-		while (r.hasNextField()) {
-			String key = r.nextField();
+		while (r.hasNext()) {
+			String key = r.nextName();
 			for (String value : Json.strings(r)) {
 				address.add(Map.entry(key, value));
 			}
@@ -128,18 +128,18 @@ final class RawPlace {
 		r.endObject();
 	}
 
-	private static @Nullable String readExtra(JsonReader r, JsonStream json, ExtraTags extraTags) {
-		if (!extraTags.keepsAny() || r.currentToken() != JsonReader.Token.BEGIN_OBJECT) {
+	private static @Nullable String readExtra(JsonReader r, ExtraTags extraTags) {
+		if (!extraTags.keepsAny() || r.peek() != JsonReader.Token.BEGIN_OBJECT) {
 			r.skipValue();
 			return null;
 		}
-		var w = json.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		boolean any = false;
 		r.beginObject();
 		w.beginObject();
-		while (r.hasNextField()) {
-			String key = r.nextField();
-			if (extraTags.keeps(key) && !r.isNullValue()) {
+		while (r.hasNext()) {
+			String key = r.nextName();
+			if (extraTags.keeps(key) && !r.nextIfNull()) {
 				w.name(key);
 				Json.copy(r, w);
 				any = true;
@@ -150,11 +150,11 @@ final class RawPlace {
 		}
 		r.endObject();
 		w.endObject();
-		String result = w.result();
+		String result = w.toString();
 		return any ? result : null;
 	}
 
-	private void readGeometry(JsonReader r, JsonStream json, boolean keep) {
+	private void readGeometry(JsonReader r, boolean keep) {
 		if (!keep && bbox != null) {
 			// The geometry would only give the bounding box, and the dump already has it.
 			// Geometries are most of a dump's bytes, so skipping them speeds up imports.
@@ -164,9 +164,9 @@ final class RawPlace {
 		double[] envelope = { Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
 				Double.NEGATIVE_INFINITY };
 		if (keep) {
-			var w = json.bufferedWriter();
+			var w = JsonWriter.ofBytes();
 			Json.geometry(r, envelope, w);
-			geometryJson = w.result();
+			geometryJson = w.toString();
 		}
 		else {
 			Json.geometry(r, envelope, null);
@@ -178,19 +178,19 @@ final class RawPlace {
 
 	private void readAddressLines(JsonReader r) {
 		r.beginArray();
-		while (r.hasNextElement()) {
+		while (r.hasNext()) {
 			String id = null;
 			boolean isAddress = false;
 			r.beginObject();
-			while (r.hasNextField()) {
-				String field = r.nextField();
-				if (r.isNullValue()) {
+			while (r.hasNext()) {
+				String field = r.nextName();
+				if (r.nextIfNull()) {
 					continue;
 				}
 				switch (field) {
-					case "place_id" -> id = r.currentToken() == JsonReader.Token.NUMBER ? Long.toString(r.readLong())
-							: r.readString();
-					case "isaddress" -> isAddress = r.readBoolean();
+					case "place_id" -> id = r.peek() == JsonReader.Token.NUMBER ? Long.toString(r.nextLong())
+							: r.nextString();
+					case "isaddress" -> isAddress = r.nextBoolean();
 					default -> r.skipValue();
 				}
 			}

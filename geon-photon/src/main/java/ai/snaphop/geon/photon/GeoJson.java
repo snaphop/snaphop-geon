@@ -9,7 +9,7 @@ import ai.snaphop.geon.BBox;
 import ai.snaphop.geon.Hit;
 import ai.snaphop.geon.Language;
 import ai.snaphop.geon.Place;
-import io.avaje.json.JsonWriter;
+import com.snaphop.jsonl.JsonWriter;
 
 /// Writes results as Photon's GeocodeJSON flavoured GeoJSON.
 ///
@@ -29,7 +29,7 @@ final class GeoJson {
 	}
 
 	static byte[] write(List<Hit> hits, PhotonRequests.Format format) {
-		var w = PhotonError.JSON.bufferedWriterAsBytes();
+		var w = JsonWriter.ofBytes();
 		w.beginObject();
 		w.name("type");
 		w.value("FeatureCollection");
@@ -60,7 +60,7 @@ final class GeoJson {
 			w.endObject();
 		}
 		w.endObject();
-		return w.result();
+		return w.toBytes();
 	}
 
 	private static void feature(JsonWriter w, Place p, PhotonRequests.Format format) {
@@ -88,7 +88,7 @@ final class GeoJson {
 		put(w, "countrycode", p.countryCode());
 		if (p.extraJson() != null) {
 			w.name("extra");
-			RawJson.write(w, p.extraJson());
+			w.rawValue(p.extraJson());
 		}
 		BBox b = p.bbox();
 		if (b != null && !b.isEmpty()) {
@@ -103,7 +103,7 @@ final class GeoJson {
 		w.endObject();
 		w.name("geometry");
 		if (format.geometry() && p.geometryJson() != null) {
-			RawJson.write(w, p.geometryJson());
+			w.rawValue(p.geometryJson());
 		}
 		else {
 			w.beginObject();

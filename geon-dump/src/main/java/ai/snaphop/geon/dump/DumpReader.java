@@ -19,9 +19,8 @@ import org.jspecify.annotations.Nullable;
 
 import ai.snaphop.geon.BBox;
 import ai.snaphop.geon.Place;
-import io.avaje.json.JsonException;
-import io.avaje.json.JsonReader;
-import io.avaje.json.stream.JsonStream;
+import com.snaphop.jsonl.JsonException;
+import com.snaphop.jsonl.JsonReader;
 
 /// Reads a Nominatim dump file and hands each [Place] to a consumer.
 ///
@@ -47,8 +46,6 @@ public final class DumpReader {
 	public static final List<String> DEFAULT_LANGUAGES = List.of("en", "de", "fr", "it");
 
 	private static final System.Logger logger = System.getLogger(DumpReader.class.getName());
-
-	private static final JsonStream JSON = JsonStream.builder().build();
 
 	private final Set<String> languages;
 
@@ -83,12 +80,12 @@ public final class DumpReader {
 	///   where the problem is.
 	/// @throws IOException if reading fails.
 	public DumpSummary read(InputStream input, Consumer<Place> sink) throws IOException {
-		return new Run(sink).read(new Lines(input));
+		return new Run(sink).read(input);
 	}
 
 	private final class Run {
 
-		private JsonReader r = JSON.reader(new byte[0]);
+		private JsonReader r = JsonReader.of(new byte[0]);
 
 		private boolean seenHeader;
 
@@ -114,28 +111,23 @@ public final class DumpReader {
 			this.sink = sink;
 		}
 
-		/// Parses the input line by line. A line may hold several documents, but a
-		/// document may not span lines, which is what the JSON lines format promises.
-		DumpSummary read(Lines lines) throws IOException {
-			byte[] line;
-			while ((line = lines.next()) != null) {
-				if (Lines.isBlank(line)) {
-					continue;
+		/// Parses the input as one stream of documents (JSON lines), naming the line of
+		/// any problem. The input isn't closed.
+		DumpSummary read(InputStream input) throws IOException {
+			r = JsonReader.of(input);
+			try {
+				while (r.hasNext()) {
+					document();
 				}
-				try (JsonReader reader = JSON.reader(line)) {
-					r = reader;
-					r.beginStream();
-					while (r.hasNextStreamElement()) {
-						document();
-					}
+			}
+			catch (JsonException e) {
+				if (e.getCause() instanceof IOException io) {
+					throw io;
 				}
-				catch (JsonException e) {
-					throw new DumpFormatException("Invalid JSON on line " + lines.number() + " of the dump: "
-							+ e.getMessage() + ". Each document must be on a single line (JSON lines).", e);
-				}
-				catch (DumpFormatException e) {
-					throw new DumpFormatException("Line " + lines.number() + " of the dump: " + e.getMessage(), e);
-				}
+				throw new DumpFormatException("Invalid JSON on line " + r.line() + " of the dump: " + e.getMessage() + ".", e);
+			}
+			catch (DumpFormatException e) {
+				throw new DumpFormatException("Line " + r.line() + " of the dump: " + e.getMessage(), e);
 			}
 			if (!seenHeader) {
 				throw new DumpFormatException("The dump is empty. Expected a NominatimDumpFile header first.");
@@ -171,12 +163,12 @@ public final class DumpReader {
 		/// Reads `{"type": ..., "content":` and leaves the reader at the content.
 		private String beginDocument() throws DumpFormatException {
 			r.beginObject();
-			if (!r.hasNextField() || !r.nextField().equals("type")) {
+			if (!r.hasNext() || !r.nextName().equals("type")) {
 				throw new DumpFormatException("Each document must start with a 'type' field (" + r.location() + ").");
 			}
-			String type = r.readString();
-			while (r.hasNextField()) {
-				if (r.nextField().equals("content")) {
+			String type = r.nextString();
+			while (r.hasNext()) {
+				if (r.nextName().equals("content")) {
 					return type;
 				}
 				r.skipValue();
@@ -185,8 +177,8 @@ public final class DumpReader {
 		}
 
 		private void endDocument() {
-			while (r.hasNextField()) {
-				r.nextField();
+			while (r.hasNext()) {
+				r.nextName();
 				r.skipValue();
 			}
 			r.endObject();
@@ -195,15 +187,15 @@ public final class DumpReader {
 		private void readHeader() throws DumpFormatException {
 			String version = null;
 			r.beginObject();
-			while (r.hasNextField()) {
-				String field = r.nextField();
-				if (r.isNullValue()) {
+			while (r.hasNext()) {
+				String field = r.nextName();
+				if (r.nextIfNull()) {
 					continue;
 				}
 				switch (field) {
-					case "version" -> version = r.readString();
-					case "generator" -> generator = r.readString();
-					case "data_timestamp" -> dataTimestamp = parseTimestamp(r.readString());
+					case "version" -> version = r.nextString();
+					case "generator" -> generator = r.nextString();
+					case "data_timestamp" -> dataTimestamp = parseTimestamp(r.nextString());
 					case "features" -> readFeatures();
 					default -> r.skipValue();
 				}
@@ -217,14 +209,14 @@ public final class DumpReader {
 
 		private void readFeatures() {
 			r.beginObject();
-			while (r.hasNextField()) {
-				String field = r.nextField();
-				if (r.isNullValue()) {
+			while (r.hasNext()) {
+				String field = r.nextName();
+				if (r.nextIfNull()) {
 					continue;
 				}
 				switch (field) {
-					case "sorted_by_country" -> sortedByCountry = r.readBoolean();
-					case "has_addresslines" -> hasAddressLines = r.readBoolean();
+					case "sorted_by_country" -> sortedByCountry = r.nextBoolean();
+					case "has_addresslines" -> hasAddressLines = r.nextBoolean();
 					default -> r.skipValue();
 				}
 			}
@@ -232,21 +224,21 @@ public final class DumpReader {
 		}
 
 		private void readCountryInfo() throws DumpFormatException {
-			if (r.currentToken() != JsonReader.Token.BEGIN_ARRAY) {
+			if (r.peek() != JsonReader.Token.BEGIN_ARRAY) {
 				throw new DumpFormatException("CountryInfo content must be an array (" + r.location() + ").");
 			}
 			r.beginArray();
-			while (r.hasNextElement()) {
+			while (r.hasNext()) {
 				String code = null;
 				Map<String, String> names = Map.of();
 				r.beginObject();
-				while (r.hasNextField()) {
-					String field = r.nextField();
-					if (r.isNullValue()) {
+				while (r.hasNext()) {
+					String field = r.nextName();
+					if (r.nextIfNull()) {
 						continue;
 					}
 					switch (field) {
-						case "country_code" -> code = r.readString();
+						case "country_code" -> code = r.nextString();
 						case "name" -> names = Json.stringMap(r);
 						default -> r.skipValue();
 					}
@@ -260,12 +252,12 @@ public final class DumpReader {
 		}
 
 		private void readPlaces() throws DumpFormatException {
-			switch (r.currentToken()) {
-				case BEGIN_OBJECT -> handle(RawPlace.parse(r, JSON, extraTags, geometries), true);
+			switch (r.peek()) {
+				case BEGIN_OBJECT -> handle(RawPlace.parse(r, extraTags, geometries), true);
 				case BEGIN_ARRAY -> {
 					r.beginArray();
-					while (r.hasNextElement()) {
-						handle(RawPlace.parse(r, JSON, extraTags, geometries), false);
+					while (r.hasNext()) {
+						handle(RawPlace.parse(r, extraTags, geometries), false);
 					}
 					r.endArray();
 				}

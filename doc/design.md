@@ -15,7 +15,7 @@ and is built as a GraalVM native image.
 3. Small footprint, fast startup, fast queries.
 4. Few dependencies:
    * Rainbow Gum (logging)
-   * avaje-jsonb (JSON)
+   * [snaphop-jsonl](https://github.com/snaphop/snaphop-jsonl) (JSON)
    * Netty (HTTP)
    * JUnit 5 (tests only)
 5. The index sits behind an interface so other implementations can be plugged in.
@@ -53,7 +53,7 @@ Java module name.
 | Module | Package | Purpose | Depends on |
 |---|---|---|---|
 | `geon` | `ai.snaphop.geon` | Place model, query model, `GeonIndex` interface | JDK only |
-| `geon-dump` | `ai.snaphop.geon.dump` | Streaming reader for the Nominatim dump format | `geon`, avaje-jsonb |
+| `geon-dump` | `ai.snaphop.geon.dump` | Streaming reader for the Nominatim dump format | `geon`, snaphop-jsonl |
 | `geon-index` | `ai.snaphop.geon.index` | Default index: build and query | `geon` |
 | `geon-http` | `ai.snaphop.geon.http` | Minimal Netty HTTP server and router | Netty |
 | `geon-photon` | `ai.snaphop.geon.photon` | Photon API: parameter parsing, validation, GeoJSON output | `geon`, `geon-http` |

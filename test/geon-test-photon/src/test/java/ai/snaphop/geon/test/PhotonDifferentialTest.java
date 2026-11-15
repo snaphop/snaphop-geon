@@ -13,7 +13,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
-import io.avaje.json.mapper.JsonMapper;
 
 /// Sends the same requests to a real Photon and to Geon, both loaded with the
 /// `zedland` fixture, and compares the responses as each case declares.
@@ -22,8 +21,6 @@ import io.avaje.json.mapper.JsonMapper;
 /// `./mvnw -Pphoton install`; `-Dphoton.jar=...` uses a local Photon jar instead of
 /// downloading it.
 class PhotonDifferentialTest {
-
-	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	@TempDir
 	static Path dir;
@@ -173,7 +170,7 @@ class PhotonDifferentialTest {
 		switch (c.mode) {
 			case SAME -> {
 				assertEquals(expected.status(), actual.status(), context);
-				assertEquals(JSON.fromJson(expected.body()), JSON.fromJson(actual.body()), context);
+				assertEquals(com.snaphop.jsonl.Json.read(expected.body()), com.snaphop.jsonl.Json.read(actual.body()), context);
 			}
 			case SAME_PLACES -> {
 				assertEquals(expected.status(), actual.status(), context);
@@ -212,7 +209,7 @@ class PhotonDifferentialTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<String> names(String body) {
-		var features = (List<Map<String, Object>>) JSON.fromJsonObject(body).get("features");
+		var features = (List<Map<String, Object>>) com.snaphop.jsonl.Json.map(com.snaphop.jsonl.Json.read(body)).get("features");
 		return features.stream().map(f -> {
 			var p = (Map<String, Object>) f.get("properties");
 			return p.get("name") + "|" + p.get("osm_key") + "=" + p.get("osm_value") + "#" + p.get("housenumber");
@@ -221,7 +218,7 @@ class PhotonDifferentialTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<String> places(String body) {
-		var features = (List<Map<String, Object>>) JSON.fromJsonObject(body).get("features");
+		var features = (List<Map<String, Object>>) com.snaphop.jsonl.Json.map(com.snaphop.jsonl.Json.read(body)).get("features");
 		return features.stream().map(f -> {
 			var p = (Map<String, Object>) f.get("properties");
 			return p.get("osm_type") + "" + p.get("osm_id") + "#" + p.get("housenumber");

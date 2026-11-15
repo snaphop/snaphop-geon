@@ -9,6 +9,8 @@ import ai.snaphop.geon.http.HttpRequest;
 import ai.snaphop.geon.http.HttpResponse;
 import ai.snaphop.geon.http.HttpServer;
 
+import com.snaphop.jsonl.JsonWriter;
+
 /// Serves Photon's HTTP API from a [GeonIndex].
 ///
 /// | Endpoint | Purpose |
@@ -99,7 +101,7 @@ public final class PhotonApi {
 
 	private HttpResponse status(HttpRequest r) {
 		Instant date = index.info().dataTimestamp();
-		var w = PhotonError.JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.beginObject();
 		w.name("status");
 		w.value("Ok");
@@ -110,12 +112,12 @@ public final class PhotonApi {
 		w.name("git_commit");
 		w.value(gitCommit);
 		w.endObject();
-		return HttpResponse.json(200, w.result());
+		return HttpResponse.json(200, w.toBytes());
 	}
 
 	/// The body follows the shape of Photon's web framework, as an RFC 9457 problem.
 	private static HttpResponse notFound(HttpRequest r) {
-		var w = PhotonError.JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.beginObject();
 		w.name("title");
 		w.value("Endpoint " + r.method() + " " + r.path() + " not found");
@@ -127,7 +129,7 @@ public final class PhotonApi {
 		w.beginObject();
 		w.endObject();
 		w.endObject();
-		return HttpResponse.json(404, w.result());
+		return HttpResponse.json(404, w.toBytes());
 	}
 
 	private static HttpResponse error(HttpRequest r, Throwable e) {

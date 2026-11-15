@@ -1,6 +1,6 @@
 package ai.snaphop.geon.photon;
 
-import io.avaje.json.stream.JsonStream;
+import com.snaphop.jsonl.JsonWriter;
 
 /// A request that Photon would reject, with the exact JSON body Photon sends.
 ///
@@ -14,8 +14,6 @@ import io.avaje.json.stream.JsonStream;
 final class PhotonError extends RuntimeException {
 
 	private static final long serialVersionUID = 1L;
-
-	static final JsonStream JSON = JsonStream.builder().build();
 
 	/// The message Javalin uses when a parameter cannot be parsed.
 	static final String TYPE_CONVERSION_FAILED = "TYPE_CONVERSION_FAILED";
@@ -40,18 +38,18 @@ final class PhotonError extends RuntimeException {
 
 	/// An error with Photon's `{"message": ...}` body.
 	static PhotonError message(int status, String message) {
-		var w = JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.beginObject();
 		w.name("message");
 		w.value(message);
 		w.endObject();
-		return new PhotonError(status, message, w.result());
+		return new PhotonError(status, message, w.toString());
 	}
 
 	/// A validation error with Javalin's body.
 	/// @param valueJson the offending value already encoded as JSON.
 	static PhotonError invalid(String param, String message, String valueJson) {
-		var w = JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.beginObject();
 		w.name(param);
 		w.beginArray();
@@ -62,11 +60,11 @@ final class PhotonError extends RuntimeException {
 		w.beginObject();
 		w.endObject();
 		w.name("value");
-		RawJson.write(w, valueJson);
+		w.rawValue(valueJson);
 		w.endObject();
 		w.endArray();
 		w.endObject();
-		return new PhotonError(400, param + ": " + message, w.result());
+		return new PhotonError(400, param + ": " + message, w.toString());
 	}
 
 	/// A parameter whose text could not be parsed.
@@ -75,17 +73,17 @@ final class PhotonError extends RuntimeException {
 	}
 
 	static String string(String s) {
-		var w = JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.value(s);
-		return w.result();
+		return w.toString();
 	}
 
 	static String strings(java.util.List<String> values) {
-		var w = JSON.bufferedWriter();
+		var w = JsonWriter.ofBytes();
 		w.beginArray();
 		values.forEach(w::value);
 		w.endArray();
-		return w.result();
+		return w.toString();
 	}
 
 	/// Formats a double the way Java and Jackson print it, for example `100.0`.

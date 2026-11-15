@@ -27,7 +27,6 @@ import org.jspecify.annotations.Nullable;
 import ai.snaphop.geon.AddressType;
 import ai.snaphop.geon.Place;
 import ai.snaphop.geon.dump.DumpReader;
-import io.avaje.json.mapper.JsonMapper;
 
 /// Measures how often Photon compatible geocoders find places sampled from a dump.
 ///
@@ -54,8 +53,6 @@ import io.avaje.json.mapper.JsonMapper;
 /// cases (default 1200), `--seed` the random seed (default 5). The same seed and dump
 /// give the same cases, so endpoints and versions can be compared.
 public final class QualityReport {
-
-	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private QualityReport() {
 	}
@@ -154,7 +151,7 @@ public final class QualityReport {
 		if (response.statusCode() != 200) {
 			return 0;
 		}
-		var features = (List<Map<String, Object>>) JSON.fromJsonObject(response.body()).get("features");
+		var features = (List<Map<String, Object>>) com.snaphop.jsonl.Json.map(com.snaphop.jsonl.Json.read(response.body())).get("features");
 		for (int i = 0; i < features.size(); i++) {
 			var p = (Map<String, Object>) features.get(i).get("properties");
 			Object id = p.get("osm_id");

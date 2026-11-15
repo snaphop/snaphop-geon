@@ -18,8 +18,8 @@
       <artifactId>geon</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.avaje</groupId>
-      <artifactId>avaje-json-core</artifactId>
+      <groupId>com.snaphop</groupId>
+      <artifactId>snaphop-jsonl</artifactId>
     </dependency>
   </dependencies>
 </project>

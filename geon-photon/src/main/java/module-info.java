@@ -9,6 +9,6 @@ module ai.snaphop.geon.photon {
 
 	requires transitive ai.snaphop.geon;
 	requires transitive ai.snaphop.geon.http;
-	requires io.avaje.json;
+	requires com.snaphop.jsonl;
 	requires static org.jspecify;
 }

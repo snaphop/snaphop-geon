@@ -49,13 +49,24 @@ final class Fixture implements AutoCloseable {
 
 	/// Like [#start(String, Path, long)] with query time synonyms.
 	static Fixture start(String name, Path dir, long memoryBudget, Synonyms synonyms) throws Exception {
-		Path file = dir.resolve(name + ".geon");
-		var reader = DumpReader.builder().extraTags(ExtraTags.ALL).build();
 		try (InputStream in = Objects.requireNonNull(Fixture.class.getResourceAsStream("/fixtures/" + name + ".jsonl"),
-				name);
-				var writer = IndexWriter.builder(file)
+				name)) {
+			return start(in, dir.resolve(name + ".geon"), memoryBudget, synonyms, false);
+		}
+	}
+
+	/// Imports `dump` with all extra tags and geometries, and starts the Photon API.
+	static Fixture startWithGeometries(byte[] dump, Path dir) throws Exception {
+		return start(new java.io.ByteArrayInputStream(dump), dir.resolve("dump.geon"), 0, Synonyms.NONE, true);
+	}
+
+	private static Fixture start(InputStream in, Path file, long memoryBudget, Synonyms synonyms, boolean geometries)
+			throws Exception {
+		var reader = DumpReader.builder().extraTags(ExtraTags.ALL).geometries(geometries).build();
+		try (var writer = IndexWriter.builder(file)
 					.languages(DumpReader.DEFAULT_LANGUAGES)
 					.memoryBudget(memoryBudget)
+					.geometries(geometries)
 					.build()) {
 			var summary = reader.read(in, writer::add);
 			writer.dataTimestamp(summary.dataTimestamp());

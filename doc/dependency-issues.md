@@ -4,106 +4,22 @@ Problems hit while building Geon on its dependencies, with reproductions and the
 workarounds in the code. When a fix lands upstream, remove the workaround and its
 entry here.
 
-## avaje-json-core 3.16
+## avaje-json-core 3.16 (no longer used)
 
-Both bugs below that have reproductions are still present in 3.17-RC1 (checked
-2026-11-06 with the same reproductions).
+Geon read and wrote JSON with avaje-json-core until 2026-11-15, then moved to
+[snaphop-jsonl](https://github.com/snaphop/snaphop-jsonl). Three avaje bugs needed
+workarounds here, all reported upstream in avaje/avaje-jsonb#607:
 
-### Streaming: `hasNextElement()` ends an array early at a buffer edge
+- The stream reader could end an array early when a string closed on the last byte
+  of its buffer. Dumps were split into lines, and each line parsed on its own.
+- A 50,000 character limit on strings and `readRaw()`. Geometries were copied token
+  by token.
+- `JsonWriter.rawValue(String)` wrote each char as one byte, corrupting non-ASCII
+  text. Non-ASCII extra tags were parsed and copied value by value.
 
-**The most serious one.** It depends only on where the data falls in the 4096 byte
-read buffer, so it shows up after gigabytes of valid input. Importing the
-Switzerland dump failed at byte 3,666,782,212:
-
-```
-Expecting ']' as array end, instead found ',' at position: 3666782212,
-following: `,`, before: `"Bärau"],"state:bn"`
-```
-
-**Cause** (`io.avaje.json.stream.core.JParser`):
-
-* `parseString()` takes a fast path for ASCII strings that reads straight from the
-  buffer up to `length`, not `readLimit`, and never refills.
-* So when a string's closing quote is the last buffered byte, `currentIndex == length`
-  afterwards, although the stream has more.
-* `hasNextElement()` starts with `if (currentIndex >= length) return false;`, which in
-  streaming mode means "end of this buffer", not "end of input", so the array looks
-  finished. The caller's `endArray()` then refills and finds the `,`.
-
-`hasNextStreamElement()` has the same early check.
-
-**Reproduction** (the closing quote of the first element is byte 4096):
-
-```java
-String json = "{\"a\":[\"" + "x".repeat(4088) + "\",\"y\"]}";
-var r = JsonStream.builder().build().reader(new ByteArrayInputStream(json.getBytes()));
-r.beginObject(); r.hasNextField(); r.nextField();
-r.beginArray();
-while (r.hasNextElement()) { r.readString(); }   // returns false after the first element
-r.endArray();                                    // JsonDataException: Expecting ']' ... found ','
-```
-
-The same JSON read from a `byte[]` works.
-
-**Workaround:** `geon-dump` splits the input into lines itself (`Lines.java`) and parses
-each line from a `byte[]`. Dumps are JSON lines, so nothing is lost, and errors now
-name the line.
-
-### `JsonWriter.rawValue(String)` corrupts non-ASCII text
-
-**Symptom:** text written with `rawValue` loses every character above U+007F. Each
-one comes out as the replacement character `EF BF BD` (or as stray null bytes once
-the response is decoded).
-
-**Reproduction:**
-
-```java
-var w = JsonStream.builder().build().bufferedWriterAsBytes();
-w.beginObject();
-w.name("ok");
-w.value("安");                   // correct UTF-8: E5 AE 89
-w.name("raw");
-w.rawValue("{\"x\":\"安\"}");     // written as EF BF BD
-w.endObject();
-```
-
-The same happens with `bufferedWriter()`. `value(String)` is correct; only
-`rawValue` is affected. It looks like each `char` is written as a single byte.
-
-**Impact on Geon:** stored `extra` tags (for example `official_name:zh`) and the
-echoed values in validation errors were corrupted.
-
-**Workaround:** `geon-photon/.../RawJson.java` uses `rawValue` only for pure ASCII and
-otherwise reparses the JSON and copies it value by value.
-
-### `readRaw()` is limited to 50,000 bytes when reading a stream
-
-**Symptom:** reading a large value with `readRaw()` from an `InputStream` fails:
-
-```
-io.avaje.json.JsonDataException: Maximum buffer limit exceeded for raw content:
-'50000' at position: 52767
-```
-
-Reading the same 460 KB value from a `byte[]` works. The limit is
-`jsonb.parserMaxStringBuffer` (env `JSONB_PARSER_MAX_STRING_BUFFER`), a global setting.
-
-**Impact on Geon:** GeoJSON geometries in planet dumps (country and coastline
-boundaries) are many megabytes, and dumps are always streamed.
-
-**Workaround:** `geon-dump/.../Json.java` never uses `readRaw`. It copies geometries
-token by token into a writer, which also lets it compute the bounding box in the
-same pass.
-
-**Question for upstream:** is the limit meant to apply to `readRaw`? A per reader
-setting would be friendlier than a global property.
-
-### Pretty printing drops `null` members
-
-With `w.pretty(true)` and the default `serializeNulls(false)`, `nullValue()` after a
-`name(...)` writes nothing. That is the documented default, but it surprised us in a
-generic JSON copy. Not a bug; noted because a copy utility needs
-`serializeNulls(true)`.
+With snaphop-jsonl the dump is one stream, and raw JSON is written as it is. The
+geometry copy stays because it also computes the bounding box. `LargeJsonTest`
+covers all three cases.
 
 ## Rainbow Gum 0.17.0 in a GraalVM native image
 

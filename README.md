@@ -4,7 +4,7 @@ Geon is a geocoder for [OpenStreetMap](https://www.openstreetmap.org) data with 
 [Photon](https://github.com/komoot/photon) compatible API. It aims to beat Photon on:
 
 * footprint and startup time (one memory mapped index file, GraalVM native image)
-* dependencies (Rainbow Gum, avaje-json and Netty)
+* dependencies (Rainbow Gum, snaphop-jsonl and Netty)
 * query speed and result quality
 * documentation
 

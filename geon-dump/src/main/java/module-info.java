@@ -7,6 +7,6 @@ module ai.snaphop.geon.dump {
 	exports ai.snaphop.geon.dump;
 
 	requires transitive ai.snaphop.geon;
-	requires io.avaje.json;
+	requires com.snaphop.jsonl;
 	requires static org.jspecify;
 }
